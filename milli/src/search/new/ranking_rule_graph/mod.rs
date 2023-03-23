@@ -100,8 +100,8 @@ pub trait RankingRuleGraphTrait: Sized {
         paths: &[Vec<Interned<Self::Condition>>],
         dead_ends_cache: &DeadEndsCache<Self::Condition>,
         universe: &RoaringBitmap,
-        distances: &MappedInterner<QueryNode, Vec<u16>>,
-        cost: u16,
+        costs: &MappedInterner<QueryNode, Vec<u64>>,
+        cost: u64,
         logger: &mut dyn SearchLogger<QueryGraph>,
     );
 }

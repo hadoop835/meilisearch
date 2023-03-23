@@ -44,16 +44,16 @@ pub enum SearchEvents {
         paths: Vec<Vec<Interned<ProximityCondition>>>,
         dead_ends_cache: DeadEndsCache<ProximityCondition>,
         universe: RoaringBitmap,
-        distances: MappedInterner<QueryNode, Vec<u16>>,
-        cost: u16,
+        costs: MappedInterner<QueryNode, Vec<u64>>,
+        cost: u64,
     },
     TypoState {
         graph: RankingRuleGraph<TypoGraph>,
         paths: Vec<Vec<Interned<TypoCondition>>>,
         dead_ends_cache: DeadEndsCache<TypoCondition>,
         universe: RoaringBitmap,
-        distances: MappedInterner<QueryNode, Vec<u16>>,
-        cost: u16,
+        costs: MappedInterner<QueryNode, Vec<u64>>,
+        cost: u64,
     },
     RankingRuleSkipBucket {
         ranking_rule_idx: usize,
@@ -170,15 +170,15 @@ impl SearchLogger<QueryGraph> for DetailedSearchLogger {
         paths_map: &[Vec<Interned<ProximityCondition>>],
         dead_ends_cache: &DeadEndsCache<ProximityCondition>,
         universe: &RoaringBitmap,
-        distances: &MappedInterner<QueryNode, Vec<u16>>,
-        cost: u16,
+        costs: &MappedInterner<QueryNode, Vec<u64>>,
+        cost: u64,
     ) {
         self.events.push(SearchEvents::ProximityState {
             graph: query_graph.clone(),
             paths: paths_map.to_vec(),
             dead_ends_cache: dead_ends_cache.clone(),
             universe: universe.clone(),
-            distances: distances.clone(),
+            costs: costs.clone(),
             cost,
         })
     }
@@ -189,15 +189,15 @@ impl SearchLogger<QueryGraph> for DetailedSearchLogger {
         paths_map: &[Vec<Interned<TypoCondition>>],
         dead_ends_cache: &DeadEndsCache<TypoCondition>,
         universe: &RoaringBitmap,
-        distances: &MappedInterner<QueryNode, Vec<u16>>,
-        cost: u16,
+        costs: &MappedInterner<QueryNode, Vec<u64>>,
+        cost: u64,
     ) {
         self.events.push(SearchEvents::TypoState {
             graph: query_graph.clone(),
             paths: paths_map.to_vec(),
             dead_ends_cache: dead_ends_cache.clone(),
             universe: universe.clone(),
-            distances: distances.clone(),
+            costs: costs.clone(),
             cost,
         })
     }
@@ -357,7 +357,7 @@ results.{cur_ranking_rule}{cur_activated_id} {{
                     paths,
                     dead_ends_cache,
                     universe,
-                    distances,
+                    costs,
                     cost,
                 } => {
                     let cur_ranking_rule = timestamp.len() - 1;
@@ -372,7 +372,7 @@ results.{cur_ranking_rule}{cur_activated_id} {{
                         graph,
                         paths,
                         dead_ends_cache,
-                        distances.clone(),
+                        costs.clone(),
                         &mut new_file,
                     );
                     writeln!(
@@ -390,7 +390,7 @@ results.{cur_ranking_rule}{cur_activated_id} {{
                     paths,
                     dead_ends_cache,
                     universe,
-                    distances,
+                    costs,
                     cost,
                 } => {
                     let cur_ranking_rule = timestamp.len() - 1;
@@ -405,7 +405,7 @@ results.{cur_ranking_rule}{cur_activated_id} {{
                         graph,
                         paths,
                         dead_ends_cache,
-                        distances.clone(),
+                        costs.clone(),
                         &mut new_file,
                     );
                     writeln!(
@@ -427,72 +427,73 @@ results.{cur_ranking_rule}{cur_activated_id} {{
         ctx: &mut SearchContext,
         node_idx: Interned<QueryNode>,
         node: &QueryNode,
-        _distances: &[u16],
+        _costs: &[u64],
         file: &mut File,
     ) {
         match &node.data {
             QueryNodeData::Term(LocatedQueryTerm { value, .. }) => {
-                let QueryTerm {
-                    original,
-                    zero_typo,
-                    one_typo,
-                    two_typos,
-                    use_prefix_db,
-                    synonyms,
-                    split_words,
-                    prefix_of,
-                    is_prefix: _,
-                    is_ngram: _,
-                    phrase,
-                } = ctx.term_interner.get(*value);
+                //                 let QueryTerm {
+                //                     original,
+                //                     zero_typo,
+                //                     one_typo,
+                //                     two_typos,
+                //                     use_prefix_db,
+                //                     synonyms,
+                //                     split_words,
+                //                     prefix_of,
+                //                     is_prefix: _,
+                //                     is_ngram: _,
+                //                     phrase,
+                //                 } = ctx.term_interner.get(*value);
 
-                let original = ctx.word_interner.get(*original);
-                writeln!(
-                    file,
-                    "{node_idx} : \"{original}\" {{
-shape: class"
-                )
-                .unwrap();
-                for w in zero_typo.iter().copied() {
-                    let w = ctx.word_interner.get(w);
-                    writeln!(file, "\"{w}\" : 0").unwrap();
-                }
-                for w in prefix_of.iter().copied() {
-                    let w = ctx.word_interner.get(w);
-                    writeln!(file, "\"{w}\" : 0P").unwrap();
-                }
-                for w in one_typo.iter().copied() {
-                    let w = ctx.word_interner.get(w);
-                    writeln!(file, "\"{w}\" : 1").unwrap();
-                }
-                for w in two_typos.iter().copied() {
-                    let w = ctx.word_interner.get(w);
-                    writeln!(file, "\"{w}\" : 2").unwrap();
-                }
-                if let Some(phrase) = phrase {
-                    let phrase = ctx.phrase_interner.get(*phrase);
-                    let phrase_str = phrase.description(&ctx.word_interner);
-                    writeln!(file, "\"{phrase_str}\" : phrase").unwrap();
-                }
-                if let Some(split_words) = split_words {
-                    let phrase = ctx.phrase_interner.get(*split_words);
-                    let phrase_str = phrase.description(&ctx.word_interner);
-                    writeln!(file, "\"{phrase_str}\" : split_words").unwrap();
-                }
-                for synonym in synonyms.iter().copied() {
-                    let phrase = ctx.phrase_interner.get(synonym);
-                    let phrase_str = phrase.description(&ctx.word_interner);
-                    writeln!(file, "\"{phrase_str}\" : synonym").unwrap();
-                }
-                if let Some(use_prefix_db) = use_prefix_db {
-                    let p = ctx.word_interner.get(*use_prefix_db);
-                    writeln!(file, "use prefix DB : {p}").unwrap();
-                }
-                // for d in distances.iter() {
-                //     writeln!(file, "\"d_{d}\" : distance").unwrap();
-                // }
+                //                 let original = ctx.word_interner.get(*original);
+                //                 writeln!(
+                //                     file,
+                //                     "{node_idx} : \"{original}\" {{
+                // shape: class"
+                //                 )
+                //                 .unwrap();
+                //                 for w in zero_typo.iter().copied() {
+                //                     let w = ctx.word_interner.get(w);
+                //                     writeln!(file, "\"{w}\" : 0").unwrap();
+                //                 }
+                //                 for w in prefix_of.iter().copied() {
+                //                     let w = ctx.word_interner.get(w);
+                //                     writeln!(file, "\"{w}\" : 0P").unwrap();
+                //                 }
+                //                 for w in one_typo.iter().copied() {
+                //                     let w = ctx.word_interner.get(w);
+                //                     writeln!(file, "\"{w}\" : 1").unwrap();
+                //                 }
+                //                 for w in two_typos.iter().copied() {
+                //                     let w = ctx.word_interner.get(w);
+                //                     writeln!(file, "\"{w}\" : 2").unwrap();
+                //                 }
+                //                 if let Some(phrase) = phrase {
+                //                     let phrase = ctx.phrase_interner.get(*phrase);
+                //                     let phrase_str = phrase.description(&ctx.word_interner);
+                //                     writeln!(file, "\"{phrase_str}\" : phrase").unwrap();
+                //                 }
+                //                 if let Some(split_words) = split_words {
+                //                     let phrase = ctx.phrase_interner.get(*split_words);
+                //                     let phrase_str = phrase.description(&ctx.word_interner);
+                //                     writeln!(file, "\"{phrase_str}\" : split_words").unwrap();
+                //                 }
+                //                 for synonym in synonyms.iter().copied() {
+                //                     let phrase = ctx.phrase_interner.get(synonym);
+                //                     let phrase_str = phrase.description(&ctx.word_interner);
+                //                     writeln!(file, "\"{phrase_str}\" : synonym").unwrap();
+                //                 }
+                //                 if let Some(use_prefix_db) = use_prefix_db {
+                //                     let p = ctx.word_interner.get(*use_prefix_db);
+                //                     writeln!(file, "use prefix DB : {p}").unwrap();
+                //                 }
+                //                 // for d in costs.iter() {
+                //                 //     writeln!(file, "\"d_{d}\" : distance").unwrap();
+                //                 // }
 
-                writeln!(file, "}}").unwrap();
+                //                 writeln!(file, "}}").unwrap();
+                todo!();
             }
             QueryNodeData::Deleted => panic!(),
             QueryNodeData::Start => {
@@ -525,7 +526,7 @@ shape: class"
         graph: &RankingRuleGraph<R>,
         paths: &[Vec<Interned<R::Condition>>],
         _dead_ends_cache: &DeadEndsCache<R::Condition>,
-        distances: MappedInterner<QueryNode, Vec<u16>>,
+        costs: MappedInterner<QueryNode, Vec<u64>>,
         file: &mut File,
     ) {
         writeln!(file, "direction: right").unwrap();
@@ -535,8 +536,8 @@ shape: class"
             if matches!(&node.data, QueryNodeData::Deleted) {
                 continue;
             }
-            let distances = &distances.get(node_idx);
-            Self::query_node_d2_desc::<R>(ctx, node_idx, node, distances, file);
+            let costs = &costs.get(node_idx);
+            Self::query_node_d2_desc::<R>(ctx, node_idx, node, costs, file);
         }
         for (_edge_id, edge) in graph.edges_store.iter() {
             let Some(edge) = edge else { continue };
@@ -560,7 +561,7 @@ shape: class"
         }
         writeln!(file, "}}").unwrap();
 
-        // writeln!(file, "Distances {{").unwrap();
+        // writeln!(file, "costs {{").unwrap();
         // Self::paths_d2_description(graph, paths, file);
         // writeln!(file, "}}").unwrap();
 

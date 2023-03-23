@@ -67,8 +67,8 @@ pub trait SearchLogger<Q: RankingRuleQueryTrait> {
         paths: &[Vec<Interned<ProximityCondition>>],
         dead_ends_cache: &DeadEndsCache<ProximityCondition>,
         universe: &RoaringBitmap,
-        distances: &MappedInterner<QueryNode, Vec<u16>>,
-        cost: u16,
+        distances: &MappedInterner<QueryNode, Vec<u64>>,
+        cost: u64,
     );
 
     /// Logs the internal state of the typo ranking rule
@@ -78,8 +78,8 @@ pub trait SearchLogger<Q: RankingRuleQueryTrait> {
         paths: &[Vec<Interned<TypoCondition>>],
         dead_ends_cache: &DeadEndsCache<TypoCondition>,
         universe: &RoaringBitmap,
-        distances: &MappedInterner<QueryNode, Vec<u16>>,
-        cost: u16,
+        distances: &MappedInterner<QueryNode, Vec<u64>>,
+        cost: u64,
     );
 }
 
@@ -138,8 +138,8 @@ impl<Q: RankingRuleQueryTrait> SearchLogger<Q> for DefaultSearchLogger {
         _paths_map: &[Vec<Interned<ProximityCondition>>],
         _dead_ends_cache: &DeadEndsCache<ProximityCondition>,
         _universe: &RoaringBitmap,
-        _distances: &MappedInterner<QueryNode, Vec<u16>>,
-        _cost: u16,
+        _costs: &MappedInterner<QueryNode, Vec<u64>>,
+        _cost: u64,
     ) {
     }
 
@@ -149,8 +149,8 @@ impl<Q: RankingRuleQueryTrait> SearchLogger<Q> for DefaultSearchLogger {
         _paths: &[Vec<Interned<TypoCondition>>],
         _dead_ends_cache: &DeadEndsCache<TypoCondition>,
         _universe: &RoaringBitmap,
-        _distances: &MappedInterner<QueryNode, Vec<u16>>,
-        _cost: u16,
+        _costs: &MappedInterner<QueryNode, Vec<u64>>,
+        _cost: u64,
     ) {
     }
 }

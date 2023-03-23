@@ -1,7 +1,3 @@
-// use std::collections::HashSet;
-use std::fmt::Write;
-use std::iter::FromIterator;
-
 use fxhash::FxHashSet;
 use roaring::RoaringBitmap;
 
@@ -9,13 +5,16 @@ use super::{DeadEndsCache, RankingRuleGraph, RankingRuleGraphTrait};
 use crate::search::new::interner::{DedupInterner, Interned, MappedInterner};
 use crate::search::new::logger::SearchLogger;
 use crate::search::new::query_graph::QueryNodeData;
-use crate::search::new::query_term::{LocatedQueryTerm, Phrase, QueryTerm};
+use crate::search::new::query_term::{
+    LocatedQueryTerm, OneTypoSubTerm, Phrase, QueryTerm, TwoTypoSubTerm, ZeroTypoSubTerm, NumberOfTypos,
+};
 use crate::search::new::{QueryGraph, QueryNode, SearchContext};
 use crate::Result;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct TypoCondition {
-    term: Interned<QueryTerm>,
+    full_term: Interned<QueryTerm>,
+    nbr_typos: NumberOfTypos,
 }
 
 pub enum TypoGraph {}
@@ -27,6 +26,7 @@ impl RankingRuleGraphTrait for TypoGraph {
         ctx: &mut SearchContext,
         condition: &Self::Condition,
         universe: &RoaringBitmap,
+        // TODO: return type could be a Cow of roaring bitmap
     ) -> Result<(RoaringBitmap, FxHashSet<Interned<String>>, FxHashSet<Interned<Phrase>>)> {
         let SearchContext {
             index,
@@ -35,103 +35,110 @@ impl RankingRuleGraphTrait for TypoGraph {
             word_interner,
             phrase_interner,
             term_interner,
-            term_docids: query_term_docids,
+            term_docids,
+            zero_typo_subterm_interner,
+            one_typo_subterm_interner,
+            two_typo_subterm_interner,
         } = ctx;
+        let TypoCondition { full_term, nbr_typos } = condition;
+        let full_term = term_interner.get_mut(*full_term);
+        let (subterm_docids, used_words, used_phrases) = match nbr_typos {
+            NumberOfTypos::Zero => {
+                let docids = term_docids.get_zero_typo_term_docids(
+                    index,
+                    txn,
+                    db_cache,
+                    zero_typo_subterm_interner,
+                    word_interner,
+                    phrase_interner,
+                    full_term.zero_typo,
+                )?;
+                let ZeroTypoSubTerm { phrase, zero_typo, prefix_of, synonyms, use_prefix_db } =
+                    zero_typo_subterm_interner.get(full_term.zero_typo);
+                let used_words = zero_typo
+                    .iter()
+                    .chain(prefix_of.iter())
+                    .chain(use_prefix_db.iter())
+                    .copied()
+                    .collect();
+                let used_phrases = phrase.iter().chain(synonyms.iter()).copied().collect();
+                (docids, used_words, used_phrases)
+            }
+            NumberOfTypos::One => {
+                let one_typo = if let Some(one_typo) = full_term.one_typo {
+                    one_typo
+                } else {
+                    todo!();
+                };
+                let docids = term_docids.get_one_typo_term_docids(
+                    index,
+                    txn,
+                    db_cache,
+                    one_typo_subterm_interner,
+                    word_interner,
+                    phrase_interner,
+                    one_typo,
+                )?;
+                let OneTypoSubTerm { split_words, one_typo } =
+                    one_typo_subterm_interner.get(one_typo);
 
-        let docids = universe
-            & query_term_docids.get_query_term_docids(
-                index,
-                txn,
-                db_cache,
-                word_interner,
-                term_interner,
-                phrase_interner,
-                condition.term,
-            )?;
+                let used_words = one_typo.iter().copied().collect();
+                let used_phrases = split_words.iter().copied().collect();
+                (docids, used_words, used_phrases)
+            }
+            NumberOfTypos::Two => {
+                let two_typo = if let Some(two_typo) = full_term.two_typo {
+                    two_typo
+                } else {
+                    todo!();
+                };
+                let docids = term_docids.get_two_typo_term_docids(
+                    index,
+                    txn,
+                    db_cache,
+                    two_typo_subterm_interner,
+                    word_interner,
+                    two_typo,
+                )?;
+                let TwoTypoSubTerm { two_typos } = two_typo_subterm_interner.get(two_typo);
+                let used_words = two_typos.iter().copied().collect();
+                (docids, used_words, FxHashSet::default())
+            }
+        };
 
-        let term = term_interner.get(condition.term);
-        Ok((
-            docids,
-            FxHashSet::from_iter(term.all_single_words_except_prefix_db()),
-            FxHashSet::from_iter(term.all_phrases()),
-        ))
+        Ok((universe & subterm_docids, used_words, used_phrases))
     }
 
     fn build_edges(
-        ctx: &mut SearchContext,
+        _ctx: &mut SearchContext,
         conditions_interner: &mut DedupInterner<Self::Condition>,
         _from_node: &QueryNode,
         to_node: &QueryNode,
     ) -> Result<Vec<(u8, Option<Interned<Self::Condition>>)>> {
-        let SearchContext { term_interner, .. } = ctx;
         match &to_node.data {
             QueryNodeData::Term(LocatedQueryTerm { value, positions }) => {
                 let mut edges = vec![];
                 // Ngrams have a base typo cost
                 // 2-gram -> equivalent to 1 typo
                 // 3-gram -> equivalent to 2 typos
+
+                // TODO: a term should have a max_nbr_typo field?
                 let base_cost = positions.len().min(2) as u8;
 
                 for nbr_typos in 0..=2 {
-                    let term = term_interner.get(*value).clone();
-                    let new_term = match nbr_typos {
-                        0 => QueryTerm {
-                            original: term.original,
-                            is_prefix: term.is_prefix,
-                            zero_typo: term.zero_typo,
-                            prefix_of: term.prefix_of,
-                            // TOOD: debatable
-                            synonyms: term.synonyms,
-                            split_words: None,
-                            one_typo: Box::new([]),
-                            two_typos: Box::new([]),
-                            use_prefix_db: term.use_prefix_db,
-                            is_ngram: term.is_ngram,
-                            phrase: term.phrase,
-                        },
-                        1 => {
-                            // What about split words and synonyms here?
-                            QueryTerm {
-                                original: term.original,
-                                is_prefix: false,
-                                zero_typo: None,
-                                prefix_of: Box::new([]),
-                                synonyms: Box::new([]),
-                                split_words: term.split_words,
-                                one_typo: term.one_typo,
-                                two_typos: Box::new([]),
-                                use_prefix_db: None, // false because all items from use_prefix_db have 0 typos
-                                is_ngram: term.is_ngram,
-                                phrase: None,
-                            }
-                        }
-                        2 => {
-                            // What about split words and synonyms here?
-                            QueryTerm {
-                                original: term.original,
-                                zero_typo: None,
-                                is_prefix: false,
-                                prefix_of: Box::new([]),
-                                synonyms: Box::new([]),
-                                split_words: None,
-                                one_typo: Box::new([]),
-                                two_typos: term.two_typos,
-                                use_prefix_db: None, // false because all items from use_prefix_db have 0 typos
-                                is_ngram: term.is_ngram,
-                                phrase: None,
-                            }
-                        }
+                    let nbr_typos = match nbr_typos {
+                        0 => NumberOfTypos::Zero,
+                        1 => NumberOfTypos::One,
+                        2 => NumberOfTypos::Two,
                         _ => panic!(),
                     };
-                    if !new_term.is_empty() {
-                        edges.push((
-                            nbr_typos as u8 + base_cost,
-                            Some(
-                                conditions_interner
-                                    .insert(TypoCondition { term: term_interner.insert(new_term) }),
-                            ),
-                        ))
-                    }
+                    edges.push((
+                        nbr_typos as u8 + base_cost,
+                        Some(
+                            conditions_interner
+                                .insert(TypoCondition { full_term: *value, nbr_typos }),
+                        ),
+                    ));
                 }
                 Ok(edges)
             }
@@ -145,81 +152,17 @@ impl RankingRuleGraphTrait for TypoGraph {
         paths: &[Vec<Interned<TypoCondition>>],
         dead_ends_cache: &DeadEndsCache<TypoCondition>,
         universe: &RoaringBitmap,
-        distances: &MappedInterner<QueryNode, Vec<u16>>,
-        cost: u16,
+        distances: &MappedInterner<QueryNode, Vec<u64>>,
+        cost: u64,
         logger: &mut dyn SearchLogger<QueryGraph>,
     ) {
         logger.log_typo_state(graph, paths, dead_ends_cache, universe, distances, cost);
     }
 
     fn label_for_condition(ctx: &mut SearchContext, condition: &Self::Condition) -> Result<String> {
-        let TypoCondition { term } = condition;
-        let term = ctx.term_interner.get(*term);
-        let QueryTerm {
-            original: _,
-            is_ngram: _,
-            is_prefix: _,
-            phrase,
-            zero_typo,
-            prefix_of,
-            synonyms,
-            split_words,
-            one_typo,
-            two_typos,
-            use_prefix_db,
-        } = term;
-        let mut s = String::new();
-        if let Some(phrase) = phrase {
-            let phrase = ctx.phrase_interner.get(*phrase).description(&ctx.word_interner);
-            writeln!(&mut s, "\"{phrase}\" : phrase").unwrap();
-        }
-        if let Some(w) = zero_typo {
-            let w = ctx.word_interner.get(*w);
-            writeln!(&mut s, "\"{w}\" : 0 typo").unwrap();
-        }
-        for w in prefix_of.iter() {
-            let w = ctx.word_interner.get(*w);
-            writeln!(&mut s, "\"{w}\" : prefix").unwrap();
-        }
-        for w in one_typo.iter() {
-            let w = ctx.word_interner.get(*w);
-            writeln!(&mut s, "\"{w}\" : 1 typo").unwrap();
-        }
-        for w in two_typos.iter() {
-            let w = ctx.word_interner.get(*w);
-            writeln!(&mut s, "\"{w}\" : 2 typos").unwrap();
-        }
-        if let Some(phrase) = split_words {
-            let phrase = ctx.phrase_interner.get(*phrase).description(&ctx.word_interner);
-            writeln!(&mut s, "\"{phrase}\" : split words").unwrap();
-        }
-        for phrase in synonyms.iter() {
-            let phrase = ctx.phrase_interner.get(*phrase).description(&ctx.word_interner);
-            writeln!(&mut s, "\"{phrase}\" : synonym").unwrap();
-        }
-        if let Some(w) = use_prefix_db {
-            let w = ctx.word_interner.get(*w);
-            writeln!(&mut s, "\"{w}\" : use prefix db").unwrap();
-        }
-
-        Ok(s)
+        let TypoCondition { full_term, nbr_typos } = condition;
+        let full_term = ctx.term_interner.get(*full_term);
+        let original = ctx.word_interner.get(full_term.original);
+        Ok(format!("{original} : {nbr_typos:?}"))
     }
-
-    // fn words_used_by_condition<'ctx>(
-    //     ctx: &mut SearchContext<'ctx>,
-    //     condition: &Self::Condition,
-    // ) -> Result<HashSet<Interned<String>>> {
-    //     let TypoCondition { term, .. } = condition;
-    //     let term = ctx.term_interner.get(*term);
-    //     Ok(HashSet::from_iter(term.all_single_words_except_prefix_db()))
-    // }
-
-    // fn phrases_used_by_condition<'ctx>(
-    //     ctx: &mut SearchContext<'ctx>,
-    //     condition: &Self::Condition,
-    // ) -> Result<HashSet<Interned<Phrase>>> {
-    //     let TypoCondition { term, .. } = condition;
-    //     let term = ctx.term_interner.get(*term);
-    //     Ok(HashSet::from_iter(term.all_phrases()))
-    // }
 }

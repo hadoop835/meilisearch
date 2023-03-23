@@ -7,9 +7,9 @@ use heed::{BytesDecode, RoTxn};
 use roaring::RoaringBitmap;
 
 use super::db_cache::DatabaseCache;
-use super::interner::{DedupInterner, Interned};
+use super::interner::{DedupInterner, Interned, Interner};
 use super::query_graph::QueryNodeData;
-use super::query_term::{Phrase, QueryTerm};
+use super::query_term::{OneTypoSubTerm, Phrase, QueryTerm, TwoTypoSubTerm, ZeroTypoSubTerm};
 use super::small_bitmap::SmallBitmap;
 use super::{QueryGraph, SearchContext};
 use crate::{CboRoaringBitmapCodec, Index, Result, RoaringBitmapCodec};
@@ -17,7 +17,10 @@ use crate::{CboRoaringBitmapCodec, Index, Result, RoaringBitmapCodec};
 #[derive(Default)]
 pub struct QueryTermDocIdsCache {
     pub phrases: FxHashMap<Interned<Phrase>, RoaringBitmap>,
-    pub terms: FxHashMap<Interned<QueryTerm>, RoaringBitmap>,
+    // pub terms: FxHashMap<Interned<QueryTerm>, RoaringBitmap>,
+    pub zero_typo: FxHashMap<Interned<ZeroTypoSubTerm>, RoaringBitmap>,
+    pub one_typo: FxHashMap<Interned<OneTypoSubTerm>, RoaringBitmap>,
+    pub two_typo: FxHashMap<Interned<TwoTypoSubTerm>, RoaringBitmap>,
 }
 impl QueryTermDocIdsCache {
     /// Get the document ids associated with the given phrase
@@ -39,50 +42,173 @@ impl QueryTermDocIdsCache {
         Ok(docids)
     }
     /// Get the document ids associated with the given term
-    pub fn get_query_term_docids<'s, 'ctx>(
+    pub fn get_zero_typo_term_docids<'s, 'ctx>(
         &'s mut self,
         index: &Index,
         txn: &'ctx RoTxn,
         db_cache: &mut DatabaseCache<'ctx>,
+        zero_typo_subterm_interner: &DedupInterner<ZeroTypoSubTerm>,
         word_interner: &DedupInterner<String>,
-        term_interner: &DedupInterner<QueryTerm>,
         phrase_interner: &DedupInterner<Phrase>,
-        term_interned: Interned<QueryTerm>,
+        term_interned: Interned<ZeroTypoSubTerm>,
     ) -> Result<&'s RoaringBitmap> {
-        if self.terms.contains_key(&term_interned) {
-            return Ok(&self.terms[&term_interned]);
+        if self.zero_typo.contains_key(&term_interned) {
+            return Ok(&self.zero_typo[&term_interned]);
         };
         let mut docids = RoaringBitmap::new();
-        // TODO: use a MultiOps?
-        let term = term_interner.get(term_interned);
-        for word in term.all_single_words_except_prefix_db() {
-            if let Some(word_docids) = db_cache.get_word_docids(index, txn, word_interner, word)? {
+        let term = zero_typo_subterm_interner.get(term_interned);
+        let ZeroTypoSubTerm { phrase, zero_typo, prefix_of, synonyms, use_prefix_db } = term;
+
+        for word in zero_typo.iter().chain(prefix_of.iter()) {
+            if let Some(word_docids) = db_cache.get_word_docids(index, txn, word_interner, *word)? {
                 docids |=
                     RoaringBitmapCodec::bytes_decode(word_docids).ok_or(heed::Error::Decoding)?;
             }
         }
-        for phrase in term.all_phrases() {
+        for phrase in phrase.iter().chain(synonyms.iter()) {
             docids |= self.get_phrase_docids(
                 index,
                 txn,
                 db_cache,
                 word_interner,
                 phrase_interner,
-                phrase,
+                *phrase,
             )?;
         }
 
-        if let Some(prefix) = term.use_prefix_db {
+        if let Some(prefix) = use_prefix_db {
             if let Some(prefix_docids) =
-                db_cache.get_word_prefix_docids(index, txn, word_interner, prefix)?
+                db_cache.get_word_prefix_docids(index, txn, word_interner, *prefix)?
             {
                 docids |=
                     RoaringBitmapCodec::bytes_decode(prefix_docids).ok_or(heed::Error::Decoding)?;
             }
         }
 
-        let _ = self.terms.insert(term_interned, docids);
-        let docids = &self.terms[&term_interned];
+        let _ = self.zero_typo.insert(term_interned, docids);
+        let docids = &self.zero_typo[&term_interned];
+        Ok(docids)
+    }
+
+    /// Get the document ids associated with the given term
+    pub fn get_one_typo_term_docids<'s, 'ctx>(
+        &'s mut self,
+        index: &Index,
+        txn: &'ctx RoTxn,
+        db_cache: &mut DatabaseCache<'ctx>,
+        one_typo_subterm_interner: &DedupInterner<OneTypoSubTerm>,
+        word_interner: &DedupInterner<String>,
+        phrase_interner: &DedupInterner<Phrase>,
+        term_interned: Interned<OneTypoSubTerm>,
+    ) -> Result<&'s RoaringBitmap> {
+        if self.one_typo.contains_key(&term_interned) {
+            return Ok(&self.one_typo[&term_interned]);
+        };
+        let mut docids = RoaringBitmap::new();
+        let term = one_typo_subterm_interner.get(term_interned);
+        let OneTypoSubTerm { split_words, one_typo } = term;
+
+        for word in one_typo.iter() {
+            if let Some(word_docids) = db_cache.get_word_docids(index, txn, word_interner, *word)? {
+                docids |=
+                    RoaringBitmapCodec::bytes_decode(word_docids).ok_or(heed::Error::Decoding)?;
+            }
+        }
+        for phrase in split_words.iter() {
+            docids |= self.get_phrase_docids(
+                index,
+                txn,
+                db_cache,
+                word_interner,
+                phrase_interner,
+                *phrase,
+            )?;
+        }
+        let _ = self.one_typo.insert(term_interned, docids);
+        let docids = &self.one_typo[&term_interned];
+        Ok(docids)
+    }
+
+    /// Get the document ids associated with the given term
+    pub fn get_two_typo_term_docids<'s, 'ctx>(
+        &'s mut self,
+        index: &Index,
+        txn: &'ctx RoTxn,
+        db_cache: &mut DatabaseCache<'ctx>,
+        two_typo_subterm_interner: &DedupInterner<TwoTypoSubTerm>,
+        word_interner: &DedupInterner<String>,
+        term_interned: Interned<TwoTypoSubTerm>,
+    ) -> Result<&'s RoaringBitmap> {
+        if self.two_typo.contains_key(&term_interned) {
+            return Ok(&self.two_typo[&term_interned]);
+        };
+        let mut docids = RoaringBitmap::new();
+        let term = two_typo_subterm_interner.get(term_interned);
+        let TwoTypoSubTerm { two_typos } = term;
+
+        for word in two_typos.iter() {
+            if let Some(word_docids) = db_cache.get_word_docids(index, txn, word_interner, *word)? {
+                docids |=
+                    RoaringBitmapCodec::bytes_decode(word_docids).ok_or(heed::Error::Decoding)?;
+            }
+        }
+
+        let _ = self.two_typo.insert(term_interned, docids);
+        let docids = &self.two_typo[&term_interned];
+        Ok(docids)
+    }
+
+    pub fn compute_query_term_docids<'ctx>(
+        &mut self,
+        index: &Index,
+        txn: &'ctx RoTxn,
+        db_cache: &mut DatabaseCache<'ctx>,
+        zero_typo_subterm_interner: &DedupInterner<ZeroTypoSubTerm>,
+        one_typo_subterm_interner: &DedupInterner<OneTypoSubTerm>,
+        two_typo_subterm_interner: &DedupInterner<TwoTypoSubTerm>,
+        word_interner: &DedupInterner<String>,
+        term_interner: &Interner<QueryTerm>,
+        phrase_interner: &DedupInterner<Phrase>,
+        term_interned: Interned<QueryTerm>,
+    ) -> Result<RoaringBitmap> {
+        // if self.terms.contains_key(&term_interned) {
+        //     return Ok(&self.terms[&term_interned]);
+        // };
+        let term = term_interner.get(term_interned);
+        let mut docids = self
+            .get_zero_typo_term_docids(
+                index,
+                txn,
+                db_cache,
+                zero_typo_subterm_interner,
+                word_interner,
+                phrase_interner,
+                term.zero_typo,
+            )?
+            .clone();
+        if let Some(one_typo) = term.one_typo {
+            docids |= self.get_one_typo_term_docids(
+                index,
+                txn,
+                db_cache,
+                one_typo_subterm_interner,
+                word_interner,
+                phrase_interner,
+                one_typo,
+            )?;
+        }
+        if let Some(two_typo) = term.two_typo {
+            docids |= self.get_two_typo_term_docids(
+                index,
+                txn,
+                db_cache,
+                two_typo_subterm_interner,
+                word_interner,
+                two_typo,
+            )?;
+        }
+        // let _ = self.terms.insert(term_interned, docids);
+        // let docids = &self.terms[&term_interned];
         Ok(docids)
     }
 }
@@ -99,6 +225,9 @@ pub fn resolve_query_graph(
         word_interner,
         phrase_interner,
         term_interner,
+        zero_typo_subterm_interner,
+        one_typo_subterm_interner,
+        two_typo_subterm_interner,
         term_docids: query_term_docids,
         ..
     } = ctx;
@@ -126,10 +255,13 @@ pub fn resolve_query_graph(
 
         let node_docids = match &node.data {
             QueryNodeData::Term(located_term) => {
-                let term_docids = query_term_docids.get_query_term_docids(
+                let term_docids = query_term_docids.compute_query_term_docids(
                     index,
                     txn,
                     db_cache,
+                    zero_typo_subterm_interner,
+                    one_typo_subterm_interner,
+                    two_typo_subterm_interner,
                     word_interner,
                     term_interner,
                     phrase_interner,

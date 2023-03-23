@@ -89,7 +89,7 @@ pub struct GraphBasedRankingRuleState<G: RankingRuleGraphTrait> {
     /// Cache used to optimistically discard paths that resolve to no documents.
     dead_ends_cache: DeadEndsCache<G::Condition>,
     /// A structure giving the list of possible costs from each node to the end node
-    all_distances: MappedInterner<QueryNode, Vec<u16>>,
+    all_costs: MappedInterner<QueryNode, Vec<u64>>,
     /// An index in the first element of `all_distances`, giving the cost of the next bucket
     cur_distance_idx: usize,
 }
@@ -110,13 +110,13 @@ impl<'ctx, G: RankingRuleGraphTrait> RankingRule<'ctx, QueryGraph> for GraphBase
         let dead_ends_cache = DeadEndsCache::new(&graph.conditions_interner);
 
         // Then pre-compute the cost of all paths from each node to the end node
-        let all_distances = graph.initialize_distances_with_necessary_edges();
+        let all_costs = graph.initialize_distances_with_necessary_edges();
 
         let state = GraphBasedRankingRuleState {
             graph,
             conditions_cache: condition_docids_cache,
             dead_ends_cache,
-            all_distances,
+            all_costs,
             cur_distance_idx: 0,
         };
 
@@ -140,16 +140,13 @@ impl<'ctx, G: RankingRuleGraphTrait> RankingRule<'ctx, QueryGraph> for GraphBase
 
         // If the cur_distance_idx does not point to a valid cost in the `all_distances`
         // structure, then we have computed all the buckets and can return.
-        if state.cur_distance_idx
-            >= state.all_distances.get(state.graph.query_graph.root_node).len()
-        {
+        if state.cur_distance_idx >= state.all_costs.get(state.graph.query_graph.root_node).len() {
             self.state = None;
             return Ok(None);
         }
 
         // Retrieve the cost of the paths to compute
-        let cost =
-            state.all_distances.get(state.graph.query_graph.root_node)[state.cur_distance_idx];
+        let cost = state.all_costs.get(state.graph.query_graph.root_node)[state.cur_distance_idx];
         state.cur_distance_idx += 1;
 
         let mut bucket = RoaringBitmap::new();
@@ -158,7 +155,7 @@ impl<'ctx, G: RankingRuleGraphTrait> RankingRule<'ctx, QueryGraph> for GraphBase
             graph,
             conditions_cache: condition_docids_cache,
             dead_ends_cache,
-            all_distances,
+            all_costs,
             cur_distance_idx: _,
         } = &mut state;
 
@@ -179,7 +176,7 @@ impl<'ctx, G: RankingRuleGraphTrait> RankingRule<'ctx, QueryGraph> for GraphBase
         graph.visit_paths_of_cost(
             graph.query_graph.root_node,
             cost,
-            all_distances,
+            all_costs,
             dead_ends_cache,
             |path, graph, dead_ends_cache| {
                 if universe.is_empty() {
@@ -337,7 +334,7 @@ impl<'ctx, G: RankingRuleGraphTrait> RankingRule<'ctx, QueryGraph> for GraphBase
             &good_paths,
             dead_ends_cache,
             original_universe,
-            all_distances,
+            all_costs,
             cost,
             logger,
         );
@@ -365,15 +362,21 @@ impl<'ctx, G: RankingRuleGraphTrait> RankingRule<'ctx, QueryGraph> for GraphBase
                     QueryNodeData::Term(term) => term,
                     QueryNodeData::Deleted | QueryNodeData::Start | QueryNodeData::End => continue,
                 };
-                if let Some(new_term) = ctx
-                    .term_interner
-                    .get(term.value)
-                    .removing_forbidden_terms(&used_words, &used_phrases)
-                {
-                    if new_term.is_empty() {
+                if let Some(new_term) = ctx.term_interner.get(term.value).removing_forbidden_terms(
+                    &used_words,
+                    &used_phrases,
+                    &mut ctx.zero_typo_subterm_interner,
+                    &mut ctx.one_typo_subterm_interner,
+                    &mut ctx.two_typo_subterm_interner,
+                ) {
+                    if new_term.is_empty(
+                        &ctx.zero_typo_subterm_interner,
+                        &ctx.one_typo_subterm_interner,
+                        &ctx.two_typo_subterm_interner,
+                    ) {
                         nodes_to_remove.push(node_id);
                     } else {
-                        term.value = ctx.term_interner.insert(new_term);
+                        term.value = ctx.term_interner.push(new_term);
                     }
                 }
             }

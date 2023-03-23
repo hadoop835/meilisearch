@@ -113,6 +113,50 @@ impl<T> FixedSizeInterner<T> {
     }
 }
 
+/// A fixed-length store for values of type `T`, where each value is identified
+/// by an index of type [`Interned<T>`].
+#[derive(Clone)]
+pub struct Interner<T> {
+    stable_store: Vec<T>,
+}
+impl<T> Default for Interner<T> {
+    fn default() -> Self {
+        Self { stable_store: vec![] }
+    }
+}
+
+impl<T> Interner<T> {
+    pub fn get(&self, interned: Interned<T>) -> &T {
+        &self.stable_store[interned.idx as usize]
+    }
+    pub fn get_mut(&mut self, interned: Interned<T>) -> &mut T {
+        &mut self.stable_store[interned.idx as usize]
+    }
+    pub fn push(&mut self, value: T) -> Interned<T> {
+        assert!(self.stable_store.len() < u16::MAX as usize);
+        self.stable_store.push(value);
+        Interned::from_raw(self.stable_store.len() as u16 - 1)
+    }
+    pub fn len(&self) -> u16 {
+        self.stable_store.len() as u16
+    }
+    pub fn map<U>(&self, map_f: impl Fn(&T) -> U) -> MappedInterner<T, U> {
+        MappedInterner {
+            stable_store: self.stable_store.iter().map(map_f).collect(),
+            _phantom: PhantomData,
+        }
+    }
+    pub fn indexes(&self) -> impl Iterator<Item = Interned<T>> {
+        (0..self.stable_store.len()).map(|i| Interned::from_raw(i as u16))
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (Interned<T>, &T)> {
+        self.stable_store.iter().enumerate().map(|(i, x)| (Interned::from_raw(i as u16), x))
+    }
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (Interned<T>, &mut T)> {
+        self.stable_store.iter_mut().enumerate().map(|(i, x)| (Interned::from_raw(i as u16), x))
+    }
+}
+
 /// A store of values of type `T`, each linked to a value of type `From`
 /// stored in another interner. To create a mapped interner, use the
 /// `map` method on [`FixedSizeInterner`] or [`MappedInterner`].

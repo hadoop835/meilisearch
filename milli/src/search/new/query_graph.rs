@@ -122,7 +122,7 @@ impl QueryGraph {
     pub fn from_query(ctx: &mut SearchContext, terms: Vec<LocatedQueryTerm>) -> Result<QueryGraph> {
         let nbr_typos = number_of_typos_allowed(ctx)?;
 
-        let mut empty_nodes = vec![];
+        // let mut empty_nodes = vec![];
 
         let mut predecessors: Vec<HashSet<u16>> = vec![HashSet::new(), HashSet::new()];
         let mut successors: Vec<HashSet<u16>> = vec![HashSet::new(), HashSet::new()];
@@ -146,9 +146,14 @@ impl QueryGraph {
                 &mut predecessors,
             );
             new_nodes.push(new_node_idx);
-            if term0.is_empty(&ctx.term_interner) {
-                empty_nodes.push(new_node_idx);
-            }
+            // if term0.is_empty(
+            //     &ctx.term_interner,
+            //     &ctx.zero_typo_subterm_interner,
+            //     &ctx.one_typo_subterm_interner,
+            //     &ctx.two_typo_subterm_interner,
+            // ) {
+            //     empty_nodes.push(new_node_idx);
+            // }
 
             if !prev1.is_empty() {
                 if let Some(ngram) =
@@ -212,8 +217,8 @@ impl QueryGraph {
             prev0.into_iter().map(Interned::from_raw).collect::<Vec<_>>().as_slice(),
             end_node,
         );
-        let empty_nodes = empty_nodes.into_iter().map(Interned::from_raw).collect::<Vec<_>>();
-        graph.remove_nodes_keep_edges(&empty_nodes);
+        // let empty_nodes = empty_nodes.into_iter().map(Interned::from_raw).collect::<Vec<_>>();
+        // graph.remove_nodes_keep_edges(&empty_nodes);
 
         Ok(graph)
     }

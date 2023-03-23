@@ -13,8 +13,8 @@ impl<G: RankingRuleGraphTrait> RankingRuleGraph<G> {
     pub fn visit_paths_of_cost(
         &mut self,
         from: Interned<QueryNode>,
-        cost: u16,
-        all_distances: &MappedInterner<QueryNode, Vec<u16>>,
+        cost: u64,
+        all_distances: &MappedInterner<QueryNode, Vec<u64>>,
         dead_ends_cache: &mut DeadEndsCache<G::Condition>,
         mut visit: impl FnMut(
             &[Interned<G::Condition>],
@@ -37,8 +37,8 @@ impl<G: RankingRuleGraphTrait> RankingRuleGraph<G> {
     pub fn visit_paths_of_cost_rec(
         &mut self,
         from: Interned<QueryNode>,
-        cost: u16,
-        all_distances: &MappedInterner<QueryNode, Vec<u16>>,
+        cost: u64,
+        all_costs: &MappedInterner<QueryNode, Vec<u64>>,
         dead_ends_cache: &mut DeadEndsCache<G::Condition>,
         visit: &mut impl FnMut(
             &[Interned<G::Condition>],
@@ -54,7 +54,7 @@ impl<G: RankingRuleGraphTrait> RankingRuleGraph<G> {
         let edges = self.edges_of_node.get(from).clone();
         'edges_loop: for edge_idx in edges.iter() {
             let Some(edge) = self.edges_store.get(edge_idx).as_ref() else { continue };
-            if cost < edge.cost as u16 {
+            if cost < edge.cost as u64 {
                 continue;
             }
             let next_any_valid = match edge.condition {
@@ -70,8 +70,8 @@ impl<G: RankingRuleGraphTrait> RankingRuleGraph<G> {
                     } else {
                         self.visit_paths_of_cost_rec(
                             edge.dest_node,
-                            cost - edge.cost as u16,
-                            all_distances,
+                            cost - edge.cost as u64,
+                            all_costs,
                             dead_ends_cache,
                             visit,
                             prev_conditions,
@@ -82,10 +82,10 @@ impl<G: RankingRuleGraphTrait> RankingRuleGraph<G> {
                 }
                 Some(condition) => {
                     if forbidden_conditions.contains(condition)
-                        || all_distances
+                        || all_costs
                             .get(edge.dest_node)
                             .iter()
-                            .all(|next_cost| *next_cost != cost - edge.cost as u16)
+                            .all(|next_cost| *next_cost != cost - edge.cost as u64)
                     {
                         continue;
                     }
@@ -109,8 +109,8 @@ impl<G: RankingRuleGraphTrait> RankingRuleGraph<G> {
                     } else {
                         self.visit_paths_of_cost_rec(
                             edge.dest_node,
-                            cost - edge.cost as u16,
-                            all_distances,
+                            cost - edge.cost as u64,
+                            all_costs,
                             dead_ends_cache,
                             visit,
                             prev_conditions,
@@ -137,7 +137,7 @@ impl<G: RankingRuleGraphTrait> RankingRuleGraph<G> {
         Ok(any_valid)
     }
 
-    pub fn initialize_distances_with_necessary_edges(&self) -> MappedInterner<QueryNode, Vec<u16>> {
+    pub fn initialize_distances_with_necessary_edges(&self) -> MappedInterner<QueryNode, Vec<u64>> {
         let mut distances_to_end = self.query_graph.nodes.map(|_| vec![]);
         let mut enqueued = SmallBitmap::new(self.query_graph.nodes.len());
 
@@ -151,7 +151,7 @@ impl<G: RankingRuleGraphTrait> RankingRuleGraph<G> {
         }
 
         while let Some(cur_node) = node_stack.pop_front() {
-            let mut self_distances = BTreeSet::<u16>::new();
+            let mut self_distances = BTreeSet::<u64>::new();
 
             let cur_node_edges = &self.edges_of_node.get(cur_node);
             for edge_idx in cur_node_edges.iter() {
@@ -159,7 +159,7 @@ impl<G: RankingRuleGraphTrait> RankingRuleGraph<G> {
                 let succ_node = edge.dest_node;
                 let succ_distances = distances_to_end.get(succ_node);
                 for succ_distance in succ_distances {
-                    self_distances.insert(edge.cost as u16 + succ_distance);
+                    self_distances.insert(edge.cost as u64 + succ_distance);
                 }
             }
             let distances_to_end_cur_node = distances_to_end.get_mut(cur_node);

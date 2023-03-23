@@ -5,7 +5,9 @@ use std::iter::FromIterator;
 use super::ProximityCondition;
 use crate::search::new::db_cache::DatabaseCache;
 use crate::search::new::interner::{DedupInterner, Interned};
-use crate::search::new::query_term::{Phrase, QueryTerm};
+use crate::search::new::query_term::{
+    OneTypoSubTerm, Phrase, QueryTerm, TwoTypoSubTerm, ZeroTypoSubTerm,
+};
 use crate::search::new::resolve_query_graph::QueryTermDocIdsCache;
 use crate::search::new::SearchContext;
 use crate::{CboRoaringBitmapCodec, Index, Result};
@@ -18,29 +20,38 @@ pub fn compute_docids(
     condition: &ProximityCondition,
     universe: &RoaringBitmap,
 ) -> Result<(RoaringBitmap, FxHashSet<Interned<String>>, FxHashSet<Interned<Phrase>>)> {
-    let (left_term, right_term, right_term_ngram_len, cost) = match condition {
-        ProximityCondition::Uninit { left_term, right_term, right_term_ngram_len, cost } => {
-            (*left_term, *right_term, *right_term_ngram_len, *cost)
-        }
-        ProximityCondition::Term { term } => {
-            let term_v = ctx.term_interner.get(*term);
-            return Ok((
-                ctx.term_docids
-                    .get_query_term_docids(
+    let (left_term, right_term, right_term_ngram_len, cost) =
+        match condition {
+            ProximityCondition::Uninit { left_term, right_term, right_term_ngram_len, cost } => {
+                (*left_term, *right_term, *right_term_ngram_len, *cost)
+            }
+            ProximityCondition::Term { term } => {
+                let term_v = ctx.term_interner.get(*term);
+                return Ok((
+                    ctx.term_docids.compute_query_term_docids(
                         ctx.index,
                         ctx.txn,
                         &mut ctx.db_cache,
+                        &ctx.zero_typo_subterm_interner,
+                        &ctx.one_typo_subterm_interner,
+                        &ctx.two_typo_subterm_interner,
                         &ctx.word_interner,
                         &ctx.term_interner,
                         &ctx.phrase_interner,
                         *term,
-                    )?
-                    .clone(),
-                FxHashSet::from_iter(term_v.all_single_words_except_prefix_db()),
-                FxHashSet::from_iter(term_v.all_phrases()),
-            ));
-        }
-    };
+                    )?,
+                    FxHashSet::from_iter(term_v.all_single_words_except_prefix_db(
+                        &ctx.zero_typo_subterm_interner,
+                        &ctx.one_typo_subterm_interner,
+                        &ctx.two_typo_subterm_interner,
+                    )),
+                    FxHashSet::from_iter(term_v.all_phrases(
+                        &ctx.zero_typo_subterm_interner,
+                        &ctx.one_typo_subterm_interner,
+                    )),
+                ));
+            }
+        };
 
     let left_term = ctx.term_interner.get(left_term);
     let right_term = ctx.term_interner.get(right_term);
@@ -62,8 +73,16 @@ pub fn compute_docids(
 
     let mut docids = RoaringBitmap::new();
 
-    if let Some(right_prefix) = right_term.use_prefix_db {
-        for (left_phrase, left_word) in last_word_of_term_iter(left_term, &ctx.phrase_interner) {
+    if let Some(right_prefix) =
+        ctx.zero_typo_subterm_interner.get(right_term.zero_typo).use_prefix_db
+    {
+        for (left_phrase, left_word) in last_word_of_term_iter(
+            left_term,
+            &ctx.phrase_interner,
+            &ctx.zero_typo_subterm_interner,
+            &ctx.one_typo_subterm_interner,
+            &ctx.two_typo_subterm_interner,
+        ) {
             compute_prefix_edges(
                 ctx.index,
                 ctx.txn,
@@ -91,9 +110,20 @@ pub fn compute_docids(
     // + one-typo/zero-typo, then one-typo/one-typo, then ... until an arbitrary limit has been
     // reached
 
-    for (left_phrase, left_word) in last_word_of_term_iter(left_term, &ctx.phrase_interner) {
-        for (right_word, right_phrase) in first_word_of_term_iter(right_term, &ctx.phrase_interner)
-        {
+    for (left_phrase, left_word) in last_word_of_term_iter(
+        left_term,
+        &ctx.phrase_interner,
+        &ctx.zero_typo_subterm_interner,
+        &ctx.one_typo_subterm_interner,
+        &ctx.two_typo_subterm_interner,
+    ) {
+        for (right_word, right_phrase) in first_word_of_term_iter(
+            right_term,
+            &ctx.phrase_interner,
+            &ctx.zero_typo_subterm_interner,
+            &ctx.one_typo_subterm_interner,
+            &ctx.two_typo_subterm_interner,
+        ) {
             compute_non_prefix_edges(
                 ctx.index,
                 ctx.txn,
@@ -268,8 +298,17 @@ fn compute_non_prefix_edges<'ctx>(
 fn last_word_of_term_iter<'t>(
     t: &'t QueryTerm,
     phrase_interner: &'t DedupInterner<Phrase>,
+    zero_typo_subterm_interner: &'t DedupInterner<ZeroTypoSubTerm>,
+    one_typo_subterm_interner: &'t DedupInterner<OneTypoSubTerm>,
+    two_typo_subterm_interner: &'t DedupInterner<TwoTypoSubTerm>,
 ) -> impl Iterator<Item = (Option<Interned<Phrase>>, Interned<String>)> + 't {
-    t.all_single_words_except_prefix_db().map(|w| (None, w)).chain(t.all_phrases().flat_map(
+    t.all_single_words_except_prefix_db(
+        zero_typo_subterm_interner,
+        one_typo_subterm_interner,
+        two_typo_subterm_interner,
+    )
+    .map(|w| (None, w))
+    .chain(t.all_phrases(zero_typo_subterm_interner, one_typo_subterm_interner).flat_map(
         move |p| {
             let phrase = phrase_interner.get(p);
             phrase.words.last().unwrap().map(|last| (Some(p), last))
@@ -279,8 +318,17 @@ fn last_word_of_term_iter<'t>(
 fn first_word_of_term_iter<'t>(
     t: &'t QueryTerm,
     phrase_interner: &'t DedupInterner<Phrase>,
+    zero_typo_subterm_interner: &'t DedupInterner<ZeroTypoSubTerm>,
+    one_typo_subterm_interner: &'t DedupInterner<OneTypoSubTerm>,
+    two_typo_subterm_interner: &'t DedupInterner<TwoTypoSubTerm>,
 ) -> impl Iterator<Item = (Interned<String>, Option<Interned<Phrase>>)> + 't {
-    t.all_single_words_except_prefix_db().map(|w| (w, None)).chain(t.all_phrases().flat_map(
+    t.all_single_words_except_prefix_db(
+        zero_typo_subterm_interner,
+        one_typo_subterm_interner,
+        two_typo_subterm_interner,
+    )
+    .map(|w| (w, None))
+    .chain(t.all_phrases(zero_typo_subterm_interner, one_typo_subterm_interner).flat_map(
         move |p| {
             let phrase = phrase_interner.get(p);
             phrase.words.first().unwrap().map(|first| (first, Some(p)))

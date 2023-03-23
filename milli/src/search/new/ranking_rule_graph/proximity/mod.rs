@@ -52,8 +52,8 @@ impl RankingRuleGraphTrait for ProximityGraph {
         paths: &[Vec<Interned<ProximityCondition>>],
         dead_ends_cache: &DeadEndsCache<Self::Condition>,
         universe: &RoaringBitmap,
-        distances: &MappedInterner<QueryNode, Vec<u16>>,
-        cost: u16,
+        distances: &MappedInterner<QueryNode, Vec<u64>>,
+        cost: u64,
         logger: &mut dyn SearchLogger<QueryGraph>,
     ) {
         logger.log_proximity_state(graph, paths, dead_ends_cache, universe, distances, cost);

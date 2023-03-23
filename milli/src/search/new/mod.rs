@@ -31,6 +31,8 @@ use resolve_query_graph::{resolve_query_graph, QueryTermDocIdsCache};
 use roaring::RoaringBitmap;
 use words::Words;
 
+use self::interner::Interner;
+use self::query_term::{OneTypoSubTerm, TwoTypoSubTerm, ZeroTypoSubTerm};
 use self::ranking_rules::RankingRule;
 use crate::{Filter, Index, MatchingWords, Result, Search, SearchResult, TermsMatchingStrategy};
 
@@ -41,7 +43,10 @@ pub struct SearchContext<'ctx> {
     pub db_cache: DatabaseCache<'ctx>,
     pub word_interner: DedupInterner<String>,
     pub phrase_interner: DedupInterner<Phrase>,
-    pub term_interner: DedupInterner<QueryTerm>,
+    pub term_interner: Interner<QueryTerm>,
+    pub zero_typo_subterm_interner: DedupInterner<ZeroTypoSubTerm>,
+    pub one_typo_subterm_interner: DedupInterner<OneTypoSubTerm>,
+    pub two_typo_subterm_interner: DedupInterner<TwoTypoSubTerm>,
     pub term_docids: QueryTermDocIdsCache,
 }
 impl<'ctx> SearchContext<'ctx> {
@@ -53,6 +58,9 @@ impl<'ctx> SearchContext<'ctx> {
             word_interner: <_>::default(),
             phrase_interner: <_>::default(),
             term_interner: <_>::default(),
+            zero_typo_subterm_interner: <_>::default(),
+            one_typo_subterm_interner: <_>::default(),
+            two_typo_subterm_interner: <_>::default(),
             term_docids: <_>::default(),
         }
     }

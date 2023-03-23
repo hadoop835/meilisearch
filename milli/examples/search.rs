@@ -44,7 +44,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                 query.trim(),
             );
             s.terms_matching_strategy(TermsMatchingStrategy::Last);
-            s.offset(0);
             // s.limit(1);
             // s.criterion_implementation_strategy(
             //     milli::CriterionImplementationStrategy::OnlySetBased,
@@ -52,26 +51,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             let docs = s.execute().unwrap();
             let elapsed = start.elapsed();
-            println!("old: {}us, docids: {:?}", elapsed.as_micros(), docs.documents_ids);
-
-            let start = Instant::now();
-            // let mut logger = milli::DetailedSearchLogger::new("log");
-            let mut ctx = SearchContext::new(&index, &txn);
-            let docs = execute_search(
-                &mut ctx,
-                query.trim(),
-                // what a the from which when there is
-                TermsMatchingStrategy::Last,
-                None,
-                0,
-                20,
-                &mut DefaultSearchLogger,
-                &mut DefaultSearchLogger,
-                // &mut logger,
-            )?;
-            // logger.write_d2_description(&mut ctx);
-            let elapsed = start.elapsed();
-            println!("new: {}us, docids: {:?}", elapsed.as_micros(), docs.documents_ids);
+            println!("{}us", elapsed.as_micros());
 
             // let documents = index
             //     .documents(&txn, docs.documents_ids.iter().copied())
