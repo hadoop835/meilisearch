@@ -9,8 +9,7 @@ use roaring::RoaringBitmap;
 use crate::search::new::interner::{Interned, MappedInterner};
 use crate::search::new::query_graph::QueryNodeData;
 use crate::search::new::query_term::{
-    Lazy, LocatedQueryTermSubset, OneTypoSubTerm, QueryTerm, TwoTypoSubTerm,
-    ZeroTypoSubTerm,
+    Lazy, LocatedQueryTermSubset, OneTypoSubTerm, QueryTerm, TwoTypoSubTerm, ZeroTypoSubTerm,
 };
 use crate::search::new::ranking_rule_graph::{
     DeadEndsCache, Edge, /*ProximityCondition, ProximityGraph,*/ RankingRuleGraph,

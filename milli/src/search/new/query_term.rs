@@ -34,6 +34,20 @@ pub enum Lazy<T> {
     Uninit,
     Init(T),
 }
+impl<T> Lazy<T> {
+    pub fn is_init(&self) -> bool {
+        match self {
+            Lazy::Uninit => false,
+            Lazy::Init(_) => true,
+        }
+    }
+    pub fn is_uninit(&self) -> bool {
+        match self {
+            Lazy::Uninit => true,
+            Lazy::Init(_) => false,
+        }
+    }
+}
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum DerivationsSubset {
@@ -50,41 +64,44 @@ impl DerivationsSubset {
             DerivationsSubset::Nothing => true,
         }
     }
-    pub fn extend(self, other: Self) -> Self {
-        match (self, other) {
-            (Self::All, _) => Self::All,
-            (_, Self::All) => Self::All,
-            (s, Self::Nothing) => s,
-            (Self::Nothing, s) => s,
-
-            (
-                Self::Subset { words: mut w1, phrases: mut p1 },
-                Self::Subset { words: w2, phrases: p2 },
-            ) => {
-                w1.extend(&w2);
-                p1.extend(&p2);
-                Self::Subset { words: w1, phrases: p1 }
+    pub fn union(&mut self, other: &Self) {
+        match self {
+            Self::All => {}
+            Self::Subset { words, phrases } => match other {
+                Self::All => {
+                    *self = Self::All;
+                }
+                Self::Subset { words: w2, phrases: p2 } => {
+                    words.extend(w2);
+                    phrases.extend(p2);
+                }
+                Self::Nothing => {}
+            },
+            Self::Nothing => {
+                *self = other.clone();
             }
         }
     }
-    pub fn subtract(self, other: Self) -> Self {
-        match (self, other) {
-            (s, Self::All) => s,
-            (Self::All, s) => s,
-            (Self::Nothing, _) => Self::Nothing,
-            (_, Self::Nothing) => Self::Nothing,
-            (
-                Self::Subset { words: mut w1, phrases: mut p1 },
-                Self::Subset { words: w2, phrases: p2 },
-            ) => {
-                for w in w2 {
-                    w1.remove(&w);
+    pub fn intersect(&mut self, other: &Self) {
+        match self {
+            Self::All => *self = other.clone(),
+            Self::Subset { words, phrases } => match other {
+                Self::All => {}
+                Self::Subset { words: w2, phrases: p2 } => {
+                    let mut ws = BTreeSet::default();
+                    for w in words.intersection(w2) {
+                        ws.insert(*w);
+                    }
+                    let mut ps = BTreeSet::default();
+                    for p in phrases.intersection(p2) {
+                        ps.insert(*p);
+                    }
+                    *words = ws;
+                    *phrases = ps;
                 }
-                for p in p2 {
-                    p1.remove(&p);
-                }
-                Self::Subset { words: w1, phrases: p1 }
-            }
+                Self::Nothing => *self = Self::Nothing,
+            },
+            Self::Nothing => {}
         }
     }
 }
@@ -163,34 +180,26 @@ pub struct LocatedQueryTermSubset {
 //     }
 // }
 
-impl Interned<QueryTerm> {
-    pub fn compute_fully_if_needed(self, ctx: &mut SearchContext) -> Result<()> {
-        let query_term = ctx.term_interner.get_mut(self);
-        if query_term.max_nbr_typos == 0 {
-            query_term.one_typo = Lazy::Init(OneTypoSubTerm::default());
-            query_term.two_typo = Lazy::Init(TwoTypoSubTerm::default());
-        } else if query_term.max_nbr_typos == 1 && matches!(query_term.one_typo, Lazy::Uninit) {
-            assert!(matches!(query_term.two_typo, Lazy::Uninit));
-            query_term.initialize_one_typo_subterm(
-                ctx.index,
-                ctx.txn,
-                &mut ctx.word_interner,
-                &mut ctx.phrase_interner,
-            )?;
-            assert!(matches!(query_term.one_typo, Lazy::Init(_)));
-            query_term.two_typo = Lazy::Init(TwoTypoSubTerm::default());
-        } else if query_term.max_nbr_typos > 1 && matches!(query_term.two_typo, Lazy::Uninit) {
-            assert!(matches!(query_term.two_typo, Lazy::Uninit));
-            query_term.initialize_one_and_two_typo_subterm(
-                ctx.index,
-                ctx.txn,
-                &mut ctx.word_interner,
-                &mut ctx.phrase_interner,
-            )?;
-            assert!(matches!(
-                (&query_term.one_typo, &query_term.two_typo),
-                (Lazy::Init(_), Lazy::Init(_))
-            ));
+impl QueryTerm {
+    pub fn compute_fully_if_needed(
+        &mut self,
+        index: &Index,
+        txn: &RoTxn,
+        word_interner: &mut DedupInterner<String>,
+        phrase_interner: &mut DedupInterner<Phrase>,
+    ) -> Result<()> {
+        if self.max_nbr_typos == 0 {
+            self.one_typo = Lazy::Init(OneTypoSubTerm::default());
+            self.two_typo = Lazy::Init(TwoTypoSubTerm::default());
+        } else if self.max_nbr_typos == 1 && self.one_typo.is_uninit() {
+            assert!(self.two_typo.is_uninit());
+            self.initialize_one_typo_subterm(index, txn, word_interner, phrase_interner)?;
+            assert!(self.one_typo.is_init());
+            self.two_typo = Lazy::Init(TwoTypoSubTerm::default());
+        } else if self.max_nbr_typos > 1 && self.two_typo.is_uninit() {
+            assert!(self.two_typo.is_uninit());
+            self.initialize_one_and_two_typo_subterm(index, txn, word_interner, phrase_interner)?;
+            assert!(self.one_typo.is_init() && self.two_typo.is_init());
         }
         Ok(())
     }
@@ -260,155 +269,6 @@ impl TwoTypoSubTerm {
 }
 
 impl QueryTerm {
-    // pub fn removing_forbidden_terms(
-    //     &self,
-    //     allowed_words: &HashSet<Interned<String>>,
-    //     allowed_phrases: &HashSet<Interned<Phrase>>,
-    //     zero_typo_subterm_interner: &mut DedupInterner<ZeroTypoSubTerm>,
-    //     one_typo_subterm_interner: &mut DedupInterner<OneTypoSubTerm>,
-    //     two_typo_subterm_interner: &mut DedupInterner<TwoTypoSubTerm>,
-    // ) -> Option<Self> {
-    //     let QueryTerm {
-    //         original,
-    //         is_multiple_words: is_ngram,
-    //         max_nbr_typos,
-    //         is_prefix,
-    //         zero_typo,
-    //         one_typo,
-    //         two_typo,
-    //     } = self;
-    //     let mut changed = false;
-
-    //     let new_zero_typo = {
-    //         let ZeroTypoSubTerm { phrase, zero_typo, prefix_of, synonyms, use_prefix_db } =
-    //             zero_typo_subterm_interner.get(*zero_typo);
-
-    //         let mut new_zero_typo = None;
-    //         if let Some(w) = zero_typo {
-    //             if allowed_words.contains(w) {
-    //                 new_zero_typo = Some(*w);
-    //             } else {
-    //                 changed = true;
-    //             }
-    //         }
-    //         // TODO: this is incorrect, prefix DB stuff should be treated separately
-    //         let mut new_use_prefix_db = None;
-    //         if let Some(w) = use_prefix_db {
-    //             if allowed_words.contains(w) {
-    //                 new_use_prefix_db = Some(*w);
-    //             } else {
-    //                 changed = true;
-    //             }
-    //         }
-    //         let mut new_prefix_of = vec![];
-    //         for w in prefix_of.iter() {
-    //             if allowed_words.contains(w) {
-    //                 new_prefix_of.push(*w);
-    //             } else {
-    //                 changed = true;
-    //             }
-    //         }
-
-    //         let mut new_phrase = None;
-    //         if let Some(w) = phrase {
-    //             if !allowed_phrases.contains(w) {
-    //                 new_phrase = Some(*w);
-    //             } else {
-    //                 changed = true;
-    //             }
-    //         }
-
-    //         let mut new_synonyms = vec![];
-    //         for w in synonyms.iter() {
-    //             if allowed_phrases.contains(w) {
-    //                 new_synonyms.push(*w);
-    //             } else {
-    //                 changed = true;
-    //             }
-    //         }
-    //         if changed {
-    //             Some(zero_typo_subterm_interner.insert(ZeroTypoSubTerm {
-    //                 phrase: new_phrase,
-    //                 zero_typo: new_zero_typo,
-    //                 prefix_of: new_prefix_of.into_boxed_slice(),
-    //                 synonyms: new_synonyms.into_boxed_slice(),
-    //                 use_prefix_db: new_use_prefix_db,
-    //             }))
-    //         } else {
-    //             None
-    //         }
-    //     };
-    //     let new_one_typo = if let Lazy::Init(one_typo) = one_typo {
-    //         let OneTypoSubTerm { split_words, one_typo } = one_typo_subterm_interner.get(*one_typo);
-
-    //         let mut new_one_typo = vec![];
-    //         for w in one_typo.iter() {
-    //             if allowed_words.contains(w) {
-    //                 new_one_typo.push(*w);
-    //             } else {
-    //                 changed = true;
-    //             }
-    //         }
-    //         let mut new_split_words = None;
-    //         if let Some(w) = split_words {
-    //             if allowed_phrases.contains(w) {
-    //                 new_split_words = Some(*w);
-    //             } else {
-    //                 changed = true;
-    //             }
-    //         }
-    //         if changed {
-    //             Some(one_typo_subterm_interner.insert(OneTypoSubTerm {
-    //                 split_words: new_split_words,
-    //                 one_typo: new_one_typo.into_boxed_slice(),
-    //             }))
-    //         } else {
-    //             None
-    //         }
-    //     } else {
-    //         None
-    //     };
-
-    //     let new_two_typo = if let Lazy::Init(two_typo) = two_typo {
-    //         let TwoTypoSubTerm { two_typos } = two_typo_subterm_interner.get(*two_typo);
-
-    //         let mut new_two_typos = vec![];
-    //         for w in two_typos.iter() {
-    //             if allowed_words.contains(w) {
-    //                 new_two_typos.push(*w);
-    //             } else {
-    //                 changed = true;
-    //             }
-    //         }
-    //         if changed {
-    //             Some(
-    //                 two_typo_subterm_interner
-    //                     .insert(TwoTypoSubTerm { two_typos: new_two_typos.into_boxed_slice() }),
-    //             )
-    //         } else {
-    //             None
-    //         }
-    //     } else {
-    //         None
-    //     };
-
-    //     let changed = new_zero_typo.is_some() || new_one_typo.is_some() || new_two_typo.is_some();
-
-    //     if changed {
-    //         Some(QueryTerm {
-    //             original: *original,
-    //             is_multiple_words: *is_ngram,
-    //             max_nbr_typos: *max_nbr_typos,
-    //             is_prefix: *is_prefix,
-    //             zero_typo: new_zero_typo.unwrap_or(*zero_typo),
-    //             one_typo: new_one_typo.or(*one_typo),
-    //             two_typo: new_two_typo.or(*two_typo),
-    //         })
-    //     } else {
-    //         None
-    //     }
-    // }
-
     pub fn phrase(
         word_interner: &mut DedupInterner<String>,
         phrase_interner: &mut DedupInterner<Phrase>,
@@ -666,7 +526,7 @@ impl QueryTerm {
     ) -> Result<()> {
         let QueryTerm { original, is_prefix, one_typo, .. } = self;
         let original_str = word_interner.get(*original).to_owned();
-        if matches!(one_typo, Lazy::Init(_)) {
+        if one_typo.is_init() {
             return Ok(());
         }
         let mut one_typo_words = vec![];
@@ -703,7 +563,7 @@ impl QueryTerm {
     ) -> Result<()> {
         let QueryTerm { original, is_prefix, two_typo, .. } = self;
         let original_str = word_interner.get(*original).to_owned();
-        if matches!(two_typo, Lazy::Init(_)) {
+        if two_typo.is_init() {
             return Ok(());
         }
         let mut one_typo_words = vec![];
@@ -789,23 +649,6 @@ pub struct LocatedQueryTerm {
     pub value: Interned<QueryTerm>,
     pub positions: RangeInclusive<i8>,
 }
-
-// impl LocatedQueryTerm {
-//     /// Return `true` iff the term is empty
-//     pub fn is_empty(
-//         &self,
-//         interner: &Interner<QueryTerm>,
-//         zero_typo_subterm_interner: &DedupInterner<ZeroTypoSubTerm>,
-//         one_typo_subterm_interner: &DedupInterner<OneTypoSubTerm>,
-//         two_typo_subterm_interner: &DedupInterner<TwoTypoSubTerm>,
-//     ) -> bool {
-//         interner.get(self.value).is_empty(
-//             zero_typo_subterm_interner,
-//             one_typo_subterm_interner,
-//             two_typo_subterm_interner,
-//         )
-//     }
-// }
 
 /// Convert the tokenised search query into a list of located query terms.
 pub fn located_query_terms_from_string(

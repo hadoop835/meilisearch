@@ -30,6 +30,13 @@ impl<G: RankingRuleGraphTrait> Default for ConditionDocIdsCache<G> {
     }
 }
 impl<G: RankingRuleGraphTrait> ConditionDocIdsCache<G> {
+    pub fn get_subsets_used_by_condition(
+        &mut self,
+        interned_condition: Interned<G::Condition>,
+    ) -> (&DerivationsSubset, &DerivationsSubset) {
+        let c = &self.cache[&interned_condition];
+        (&c.from_subset, &c.to_subset)
+    }
     /// Retrieve the document ids for the given edge condition.
     ///
     /// If the cache does not yet contain these docids, they are computed
@@ -42,8 +49,6 @@ impl<G: RankingRuleGraphTrait> ConditionDocIdsCache<G> {
         universe: &RoaringBitmap,
     ) -> Result<&'s ComputedCondition> {
         if self.cache.contains_key(&interned_condition) {
-            // TODO compare length of universe compared to the one in self
-            // if it is smaller, then update the value
             let computed = self.cache.get_mut(&interned_condition).unwrap();
             if computed.universe_len == universe.len() {
                 return Ok(computed);

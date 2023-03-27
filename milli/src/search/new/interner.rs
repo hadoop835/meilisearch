@@ -4,6 +4,8 @@ use std::marker::PhantomData;
 
 use fxhash::FxHashMap;
 
+use super::small_bitmap::SmallBitmap;
+
 /// An index within an interner ([`FixedSizeInterner`], [`DedupInterner`], or [`MappedInterner`]).
 pub struct Interned<T> {
     idx: u16,
@@ -86,6 +88,13 @@ impl<T> FixedSizeInterner<T> {
     pub fn from_vec(store: Vec<T>) -> Self {
         Self { stable_store: store }
     }
+    pub fn all_interned_values(&self) -> SmallBitmap<T> {
+        let mut b = SmallBitmap::for_interned_values_in(self);
+        for i in self.indexes() {
+            b.insert(i);
+        }
+        b
+    }
     pub fn get(&self, interned: Interned<T>) -> &T {
         &self.stable_store[interned.idx as usize]
     }
@@ -101,6 +110,9 @@ impl<T> FixedSizeInterner<T> {
             stable_store: self.stable_store.iter().map(map_f).collect(),
             _phantom: PhantomData,
         }
+    }
+    pub fn map_indexes<U>(&self, map_f: impl Fn(Interned<T>) -> U) -> MappedInterner<T, U> {
+        MappedInterner { stable_store: self.indexes().map(map_f).collect(), _phantom: PhantomData }
     }
     pub fn indexes(&self) -> impl Iterator<Item = Interned<T>> {
         (0..self.stable_store.len()).map(|i| Interned::from_raw(i as u16))

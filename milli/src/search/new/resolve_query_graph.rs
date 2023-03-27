@@ -54,8 +54,19 @@ pub fn compute_query_term_subset_docids(
         term_interner,
         term_docids,
     } = ctx;
-    let full_term = term_interner.get(term.original);
+    let full_term = term_interner.get_mut(term.original);
     let mut docids = RoaringBitmap::new();
+
+    // The order is important
+    if !term.two_typo_subset.is_empty() && full_term.two_typo.is_uninit() {
+        full_term.compute_fully_if_needed(index, txn, word_interner, phrase_interner)?;
+        assert!(full_term.one_typo.is_init());
+        assert!(full_term.two_typo.is_init());
+    } else if !term.one_typo_subset.is_empty() && full_term.one_typo.is_uninit() {
+        // TODO: do less work than this here!
+        full_term.compute_fully_if_needed(index, txn, word_interner, phrase_interner)?;
+        assert!(full_term.one_typo.is_init());
+    }
 
     if !term.zero_typo_subset.is_empty() {
         let ZeroTypoSubTerm { phrase, zero_typo, prefix_of, synonyms, use_prefix_db } =
@@ -88,11 +99,8 @@ pub fn compute_query_term_subset_docids(
     }
 
     if !term.one_typo_subset.is_empty() {
-        let OneTypoSubTerm { split_words, one_typo } = if let Lazy::Init(t) = &full_term.one_typo {
-            t
-        } else {
-            todo!();
-        };
+        let OneTypoSubTerm { split_words, one_typo } =
+            if let Lazy::Init(t) = &full_term.one_typo { t } else { panic!() };
         for word in one_typo.iter() {
             if let Some(word_docids) = db_cache.get_word_docids(index, txn, word_interner, *word)? {
                 docids |=
@@ -114,7 +122,7 @@ pub fn compute_query_term_subset_docids(
         let TwoTypoSubTerm { two_typos } = if let Lazy::Init(t) = &full_term.two_typo {
             t
         } else {
-            todo!();
+            panic!();
         };
 
         for word in two_typos.iter() {
@@ -133,16 +141,7 @@ pub fn resolve_query_graph(
     q: &QueryGraph,
     universe: &RoaringBitmap,
 ) -> Result<RoaringBitmap> {
-    // let SearchContext {
-    //     index,
-    //     txn,
-    //     db_cache,
-    //     word_interner,
-    //     phrase_interner,
-    //     term_interner,
-    //     term_docids: query_term_docids,
-    // } = ctx;
-    // TODO: there is a faster way to compute this big
+    // TODO: there must be a faster way to compute this big
     // roaring bitmap expression
 
     let mut nodes_resolved = SmallBitmap::for_interned_values_in(&q.nodes);

@@ -49,6 +49,8 @@ use super::ranking_rule_graph::{
 };
 use super::small_bitmap::SmallBitmap;
 use super::{QueryGraph, RankingRule, RankingRuleOutput, SearchContext};
+use crate::search::new::query_graph::QueryNodeData;
+use crate::search::new::query_term::DerivationsSubset;
 use crate::Result;
 
 // pub type Proximity = GraphBasedRankingRule<ProximityGraph>;
@@ -339,42 +341,57 @@ impl<'ctx, G: RankingRuleGraphTrait> RankingRule<'ctx, QueryGraph> for GraphBase
         // that was used to compute this bucket
         // But we only do it in case the bucket length is >1, because otherwise
         // we know the child ranking rule won't be called anyway
-        let /*mut*/ next_query_graph = original_graph.query_graph;
+        let mut next_query_graph = original_graph.query_graph;
 
-        // TODO: reimplement this better
-        // if bucket.len() > 1 {
-        //     next_query_graph.simplify();
-        //     // 1. Gather all the words and phrases used in the computation of this bucket
-        //     let mut used_words = HashSet::new();
-        //     let mut used_phrases = HashSet::new();
-        //     for condition in used_conditions.iter() {
-        //         let (ws, ps) =
-        //             condition_docids_cache.get_condition_used_words_and_phrases(condition);
-        //         used_words.extend(ws);
-        //         used_phrases.extend(ps);
-        //     }
-        //     // 2. Remove the unused words and phrases from all the nodes in the graph
-        //     let mut nodes_to_remove = vec![];
-        //     for (node_id, node) in next_query_graph.nodes.iter_mut() {
-        //         let term = match &mut node.data {
-        //             QueryNodeData::Term(term) => term,
-        //             QueryNodeData::Deleted | QueryNodeData::Start | QueryNodeData::End => continue,
-        //         };
-        //         if let Some(new_term) = ctx
-        //             .term_interner
-        //             .get(term.value)
-        //             .removing_forbidden_terms(&used_words, &used_phrases)
-        //         {
-        //             if new_term.is_empty() {
-        //                 nodes_to_remove.push(node_id);
-        //             } else {
-        //                 term.value = ctx.term_interner.push(new_term);
-        //             }
-        //         }
-        //     }
-        //     // 3. Remove the empty nodes from the graph
-        //     next_query_graph.remove_nodes(&nodes_to_remove);
-        // }
+        if bucket.len() > 1 {
+            next_query_graph.simplify();
+
+            let mut subset_for_node = next_query_graph.nodes.map(|_| DerivationsSubset::Nothing);
+            for condition in used_conditions.iter() {
+                let (from_subset, to_subset) =
+                    condition_docids_cache.get_subsets_used_by_condition(condition);
+                let from_nodes = original_graph.from_nodes_of_condition.get(condition);
+                for from_node in from_nodes.iter() {
+                    let existing_subset = subset_for_node.get_mut(from_node);
+                    existing_subset.union(from_subset);
+                }
+
+                let to_nodes = original_graph.to_nodes_of_condition.get(condition);
+                for to_node in to_nodes.iter() {
+                    let existing_subset = subset_for_node.get_mut(to_node);
+                    existing_subset.union(to_subset);
+                }
+            }
+
+            for (node_id, node) in next_query_graph.nodes.iter_mut() {
+                let term = match &mut node.data {
+                    QueryNodeData::Term(term) => term,
+                    QueryNodeData::Deleted | QueryNodeData::Start | QueryNodeData::End => continue,
+                };
+                let used_subset = subset_for_node.get(node_id);
+                term.term_subset.zero_typo_subset.intersect(used_subset);
+                term.term_subset.one_typo_subset.intersect(used_subset);
+                term.term_subset.two_typo_subset.intersect(used_subset);
+            }
+            let mut unused_nodes = SmallBitmap::for_interned_values_in(&next_query_graph.nodes);
+            for (node_id, node) in next_query_graph.nodes.iter() {
+                match &node.data {
+                    QueryNodeData::Term(term) => {
+                        if term.term_subset.zero_typo_subset.is_empty()
+                            && term.term_subset.one_typo_subset.is_empty()
+                            && term.term_subset.two_typo_subset.is_empty()
+                        {
+                            unused_nodes.insert(node_id);
+                        }
+                    }
+                    QueryNodeData::Deleted | QueryNodeData::Start | QueryNodeData::End => {}
+                }
+            }
+
+            // 3. Remove the empty nodes from the graph
+            next_query_graph
+                .remove_nodes_keep_edges(unused_nodes.iter().collect::<Vec<_>>().as_slice());
+        }
 
         self.state = Some(state);
 
