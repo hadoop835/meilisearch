@@ -10,21 +10,21 @@ fn main() {
     let mut options = EnvOpenOptions::new();
     options.map_size(100 * 1024 * 1024 * 1024); // 100 GB
 
-    let index = Index::new(options, "data_movies").unwrap();
+    let index = Index::new(options, "/Users/meilisearch/Documents/datasets/data_wiki").unwrap();
     let mut wtxn = index.write_txn().unwrap();
 
     let config = IndexerConfig::default();
     let mut builder = Settings::new(&mut wtxn, &index, &config);
 
-    // builder.set_min_word_len_one_typo(5);
-    // builder.set_min_word_len_two_typos(7);
+    builder.set_min_word_len_one_typo(5);
+    builder.set_min_word_len_two_typos(7);
     // builder.set_sortable_fields(hashset! { S("release_date") });
     builder.set_criteria(vec![
         Criterion::Words,
         Criterion::Typo,
         Criterion::Proximity,
-        Criterion::Attribute,
-        Criterion::Exactness,
+        // Criterion::Attribute,
+        // Criterion::Exactness,
         // Criterion::Asc("release_date".to_owned()),
     ]);
 

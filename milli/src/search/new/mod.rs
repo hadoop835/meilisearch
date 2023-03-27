@@ -19,12 +19,13 @@ use std::collections::{BTreeSet, HashSet};
 
 use charabia::TokenizerBuilder;
 use db_cache::DatabaseCache;
-use graph_based_ranking_rule::{Proximity, Typo};
+use graph_based_ranking_rule::Typo;
 use heed::RoTxn;
 use interner::DedupInterner;
 pub use logger::detailed::DetailedSearchLogger;
 pub use logger::{DefaultSearchLogger, SearchLogger};
-use query_graph::{QueryGraph, QueryNode, QueryNodeData};
+pub use query_graph::QueryGraph;
+use query_graph::{QueryNode, QueryNodeData};
 use query_term::{located_query_terms_from_string, Phrase, QueryTerm};
 use ranking_rules::{bucket_sort, PlaceholderQuery, RankingRuleOutput, RankingRuleQueryTrait};
 use resolve_query_graph::{resolve_query_graph, QueryTermDocIdsCache};
@@ -32,7 +33,7 @@ use roaring::RoaringBitmap;
 use words::Words;
 
 use self::interner::Interner;
-use self::query_term::{OneTypoSubTerm, TwoTypoSubTerm, ZeroTypoSubTerm};
+use self::query_term::LocatedQueryTermSubset;
 use self::ranking_rules::RankingRule;
 use crate::{Filter, Index, MatchingWords, Result, Search, SearchResult, TermsMatchingStrategy};
 
@@ -44,9 +45,6 @@ pub struct SearchContext<'ctx> {
     pub word_interner: DedupInterner<String>,
     pub phrase_interner: DedupInterner<Phrase>,
     pub term_interner: Interner<QueryTerm>,
-    pub zero_typo_subterm_interner: DedupInterner<ZeroTypoSubTerm>,
-    pub one_typo_subterm_interner: DedupInterner<OneTypoSubTerm>,
-    pub two_typo_subterm_interner: DedupInterner<TwoTypoSubTerm>,
     pub term_docids: QueryTermDocIdsCache,
 }
 impl<'ctx> SearchContext<'ctx> {
@@ -58,9 +56,6 @@ impl<'ctx> SearchContext<'ctx> {
             word_interner: <_>::default(),
             phrase_interner: <_>::default(),
             term_interner: <_>::default(),
-            zero_typo_subterm_interner: <_>::default(),
-            one_typo_subterm_interner: <_>::default(),
-            two_typo_subterm_interner: <_>::default(),
             term_docids: <_>::default(),
         }
     }
@@ -82,7 +77,8 @@ fn resolve_maximally_reduced_query_graph(
             for (_, n) in query_graph.nodes.iter() {
                 match &n.data {
                     QueryNodeData::Term(term) => {
-                        all_positions.extend(term.positions.clone());
+                        let LocatedQueryTermSubset { term_subset: _, positions } = term;
+                        all_positions.extend(positions.clone());
                     }
                     QueryNodeData::Deleted | QueryNodeData::Start | QueryNodeData::End => {}
                 }
@@ -186,7 +182,7 @@ fn get_ranking_rules_for_query_graph_search<'ctx>(
                     continue;
                 }
                 proximity = true;
-                ranking_rules.push(Box::<Proximity>::default());
+                // ranking_rules.push(Box::<Proximity>::default());
             }
             crate::Criterion::Attribute => {
                 if attribute {
@@ -264,7 +260,7 @@ pub fn execute_search(
         let tokens = tokenizer.tokenize(query);
 
         let query_terms = located_query_terms_from_string(ctx, tokens, words_limit)?;
-        let graph = QueryGraph::from_query(ctx, query_terms)?;
+        let graph = QueryGraph::from_query(ctx, &query_terms)?;
 
         universe = resolve_maximally_reduced_query_graph(
             ctx,

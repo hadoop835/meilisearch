@@ -8,9 +8,12 @@ use roaring::RoaringBitmap;
 
 use crate::search::new::interner::{Interned, MappedInterner};
 use crate::search::new::query_graph::QueryNodeData;
-use crate::search::new::query_term::{LocatedQueryTerm, QueryTerm};
+use crate::search::new::query_term::{
+    Lazy, LocatedQueryTermSubset, OneTypoSubTerm, QueryTerm, TwoTypoSubTerm,
+    ZeroTypoSubTerm,
+};
 use crate::search::new::ranking_rule_graph::{
-    DeadEndsCache, Edge, ProximityCondition, ProximityGraph, RankingRuleGraph,
+    DeadEndsCache, Edge, /*ProximityCondition, ProximityGraph,*/ RankingRuleGraph,
     RankingRuleGraphTrait, TypoCondition, TypoGraph,
 };
 use crate::search::new::{QueryGraph, QueryNode, RankingRule, SearchContext, SearchLogger};
@@ -39,14 +42,14 @@ pub enum SearchEvents {
     WordsState {
         query_graph: QueryGraph,
     },
-    ProximityState {
-        graph: RankingRuleGraph<ProximityGraph>,
-        paths: Vec<Vec<Interned<ProximityCondition>>>,
-        dead_ends_cache: DeadEndsCache<ProximityCondition>,
-        universe: RoaringBitmap,
-        costs: MappedInterner<QueryNode, Vec<u64>>,
-        cost: u64,
-    },
+    // ProximityState {
+    //     graph: RankingRuleGraph<ProximityGraph>,
+    //     paths: Vec<Vec<Interned<ProximityCondition>>>,
+    //     dead_ends_cache: DeadEndsCache<ProximityCondition>,
+    //     universe: RoaringBitmap,
+    //     costs: MappedInterner<QueryNode, Vec<u64>>,
+    //     cost: u64,
+    // },
     TypoState {
         graph: RankingRuleGraph<TypoGraph>,
         paths: Vec<Vec<Interned<TypoCondition>>>,
@@ -164,24 +167,24 @@ impl SearchLogger<QueryGraph> for DetailedSearchLogger {
         self.events.push(SearchEvents::WordsState { query_graph: query_graph.clone() });
     }
 
-    fn log_proximity_state(
-        &mut self,
-        query_graph: &RankingRuleGraph<ProximityGraph>,
-        paths_map: &[Vec<Interned<ProximityCondition>>],
-        dead_ends_cache: &DeadEndsCache<ProximityCondition>,
-        universe: &RoaringBitmap,
-        costs: &MappedInterner<QueryNode, Vec<u64>>,
-        cost: u64,
-    ) {
-        self.events.push(SearchEvents::ProximityState {
-            graph: query_graph.clone(),
-            paths: paths_map.to_vec(),
-            dead_ends_cache: dead_ends_cache.clone(),
-            universe: universe.clone(),
-            costs: costs.clone(),
-            cost,
-        })
-    }
+    // fn log_proximity_state(
+    //     &mut self,
+    //     query_graph: &RankingRuleGraph<ProximityGraph>,
+    //     paths_map: &[Vec<Interned<ProximityCondition>>],
+    //     dead_ends_cache: &DeadEndsCache<ProximityCondition>,
+    //     universe: &RoaringBitmap,
+    //     costs: &MappedInterner<QueryNode, Vec<u64>>,
+    //     cost: u64,
+    // ) {
+    //     self.events.push(SearchEvents::ProximityState {
+    //         graph: query_graph.clone(),
+    //         paths: paths_map.to_vec(),
+    //         dead_ends_cache: dead_ends_cache.clone(),
+    //         universe: universe.clone(),
+    //         costs: costs.clone(),
+    //         cost,
+    //     })
+    // }
 
     fn log_typo_state(
         &mut self,
@@ -352,39 +355,39 @@ results.{cur_ranking_rule}{cur_activated_id} {{
                     )
                     .unwrap();
                 }
-                SearchEvents::ProximityState {
-                    graph,
-                    paths,
-                    dead_ends_cache,
-                    universe,
-                    costs,
-                    cost,
-                } => {
-                    let cur_ranking_rule = timestamp.len() - 1;
-                    *timestamp.last_mut().unwrap() += 1;
-                    let cur_activated_id = activated_id(&timestamp);
-                    *timestamp.last_mut().unwrap() -= 1;
-                    let id = format!("{cur_ranking_rule}.{cur_activated_id}");
-                    let new_file_path = self.folder_path.join(format!("{id}.d2"));
-                    let mut new_file = std::fs::File::create(new_file_path).unwrap();
-                    Self::ranking_rule_graph_d2_description(
-                        ctx,
-                        graph,
-                        paths,
-                        dead_ends_cache,
-                        costs.clone(),
-                        &mut new_file,
-                    );
-                    writeln!(
-                        &mut file,
-                        "{id} {{
-    link: \"{id}.d2.svg\"
-    tooltip: \"cost {cost}, universe len: {}\"
-}}",
-                        universe.len()
-                    )
-                    .unwrap();
-                }
+                // SearchEvents::ProximityState {
+                //     graph,
+                //     paths,
+                //     dead_ends_cache,
+                //     universe,
+                //     costs,
+                //     cost,
+                // } => {
+                //                     let cur_ranking_rule = timestamp.len() - 1;
+                //                     *timestamp.last_mut().unwrap() += 1;
+                //                     let cur_activated_id = activated_id(&timestamp);
+                //                     *timestamp.last_mut().unwrap() -= 1;
+                //                     let id = format!("{cur_ranking_rule}.{cur_activated_id}");
+                //                     let new_file_path = self.folder_path.join(format!("{id}.d2"));
+                //                     let mut new_file = std::fs::File::create(new_file_path).unwrap();
+                //                     Self::ranking_rule_graph_d2_description(
+                //                         ctx,
+                //                         graph,
+                //                         paths,
+                //                         dead_ends_cache,
+                //                         costs.clone(),
+                //                         &mut new_file,
+                //                     );
+                //                     writeln!(
+                //                         &mut file,
+                //                         "{id} {{
+                //     link: \"{id}.d2.svg\"
+                //     tooltip: \"cost {cost}, universe len: {}\"
+                // }}",
+                //                         universe.len()
+                //                     )
+                //                     .unwrap();
+                //                 }
                 SearchEvents::TypoState {
                     graph,
                     paths,
@@ -431,69 +434,79 @@ results.{cur_ranking_rule}{cur_activated_id} {{
         file: &mut File,
     ) {
         match &node.data {
-            QueryNodeData::Term(LocatedQueryTerm { value, .. }) => {
-                //                 let QueryTerm {
-                //                     original,
-                //                     zero_typo,
-                //                     one_typo,
-                //                     two_typos,
-                //                     use_prefix_db,
-                //                     synonyms,
-                //                     split_words,
-                //                     prefix_of,
-                //                     is_prefix: _,
-                //                     is_ngram: _,
-                //                     phrase,
-                //                 } = ctx.term_interner.get(*value);
+            QueryNodeData::Term(LocatedQueryTermSubset { term_subset, positions: _ }) => {
+                let QueryTerm {
+                    original,
+                    is_multiple_words: _,
+                    is_prefix: _,
+                    max_nbr_typos,
+                    zero_typo,
+                    one_typo,
+                    two_typo,
+                } = ctx.term_interner.get(term_subset.original);
 
-                //                 let original = ctx.word_interner.get(*original);
-                //                 writeln!(
-                //                     file,
-                //                     "{node_idx} : \"{original}\" {{
-                // shape: class"
-                //                 )
-                //                 .unwrap();
-                //                 for w in zero_typo.iter().copied() {
-                //                     let w = ctx.word_interner.get(w);
-                //                     writeln!(file, "\"{w}\" : 0").unwrap();
-                //                 }
-                //                 for w in prefix_of.iter().copied() {
-                //                     let w = ctx.word_interner.get(w);
-                //                     writeln!(file, "\"{w}\" : 0P").unwrap();
-                //                 }
-                //                 for w in one_typo.iter().copied() {
-                //                     let w = ctx.word_interner.get(w);
-                //                     writeln!(file, "\"{w}\" : 1").unwrap();
-                //                 }
-                //                 for w in two_typos.iter().copied() {
-                //                     let w = ctx.word_interner.get(w);
-                //                     writeln!(file, "\"{w}\" : 2").unwrap();
-                //                 }
-                //                 if let Some(phrase) = phrase {
-                //                     let phrase = ctx.phrase_interner.get(*phrase);
-                //                     let phrase_str = phrase.description(&ctx.word_interner);
-                //                     writeln!(file, "\"{phrase_str}\" : phrase").unwrap();
-                //                 }
-                //                 if let Some(split_words) = split_words {
-                //                     let phrase = ctx.phrase_interner.get(*split_words);
-                //                     let phrase_str = phrase.description(&ctx.word_interner);
-                //                     writeln!(file, "\"{phrase_str}\" : split_words").unwrap();
-                //                 }
-                //                 for synonym in synonyms.iter().copied() {
-                //                     let phrase = ctx.phrase_interner.get(synonym);
-                //                     let phrase_str = phrase.description(&ctx.word_interner);
-                //                     writeln!(file, "\"{phrase_str}\" : synonym").unwrap();
-                //                 }
-                //                 if let Some(use_prefix_db) = use_prefix_db {
-                //                     let p = ctx.word_interner.get(*use_prefix_db);
-                //                     writeln!(file, "use prefix DB : {p}").unwrap();
-                //                 }
-                //                 // for d in costs.iter() {
-                //                 //     writeln!(file, "\"d_{d}\" : distance").unwrap();
-                //                 // }
+                let original = ctx.word_interner.get(*original);
+                writeln!(
+                    file,
+                    "{node_idx} : \"{original}\" {{
+                shape: class
+                max_nbr_typo: {max_nbr_typos}"
+                )
+                .unwrap();
 
-                //                 writeln!(file, "}}").unwrap();
-                todo!();
+                let ZeroTypoSubTerm { phrase, zero_typo, prefix_of, synonyms, use_prefix_db } =
+                    zero_typo;
+
+                for w in zero_typo.iter().copied() {
+                    let w = ctx.word_interner.get(w);
+                    writeln!(file, "\"{w}\" : 0").unwrap();
+                }
+                for w in prefix_of.iter().copied() {
+                    let w = ctx.word_interner.get(w);
+                    writeln!(file, "\"{w}\" : 0P").unwrap();
+                }
+
+                if let Some(phrase) = phrase {
+                    let phrase = ctx.phrase_interner.get(*phrase);
+                    let phrase_str = phrase.description(&ctx.word_interner);
+                    writeln!(file, "\"{phrase_str}\" : phrase").unwrap();
+                }
+
+                for synonym in synonyms.iter().copied() {
+                    let phrase = ctx.phrase_interner.get(synonym);
+                    let phrase_str = phrase.description(&ctx.word_interner);
+                    writeln!(file, "\"{phrase_str}\" : synonym").unwrap();
+                }
+                if let Some(use_prefix_db) = use_prefix_db {
+                    let p = ctx.word_interner.get(*use_prefix_db);
+                    writeln!(file, "use prefix DB : {p}").unwrap();
+                }
+                if let Lazy::Init(one_typo) = one_typo {
+                    let OneTypoSubTerm { split_words, one_typo } = one_typo;
+
+                    for w in one_typo.iter().copied() {
+                        let w = ctx.word_interner.get(w);
+                        writeln!(file, "\"{w}\" : 1").unwrap();
+                    }
+                    if let Some(split_words) = split_words {
+                        let phrase = ctx.phrase_interner.get(*split_words);
+                        let phrase_str = phrase.description(&ctx.word_interner);
+                        writeln!(file, "\"{phrase_str}\" : split_words").unwrap();
+                    }
+                }
+                if let Lazy::Init(two_typo) = two_typo {
+                    let TwoTypoSubTerm { two_typos } = two_typo;
+                    for w in two_typos.iter().copied() {
+                        let w = ctx.word_interner.get(w);
+                        writeln!(file, "\"{w}\" : 2").unwrap();
+                    }
+                }
+
+                // for d in costs.iter() {
+                //     writeln!(file, "\"d_{d}\" : distance").unwrap();
+                // }
+
+                writeln!(file, "}}").unwrap();
             }
             QueryNodeData::Deleted => panic!(),
             QueryNodeData::Start => {

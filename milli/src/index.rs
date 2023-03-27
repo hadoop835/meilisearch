@@ -2432,7 +2432,7 @@ pub(crate) mod tests {
         db_snap!(index, soft_deleted_documents_ids, @"[2, 3, ]");
 
         let rtxn = index.read_txn().unwrap();
-        let search = Search::new(&rtxn, &index);
+        let mut search = Search::new(&rtxn, &index);
         let SearchResult { matching_words: _, candidates: _, mut documents_ids } =
             search.execute().unwrap();
         let primary_key_id = index.fields_ids_map(&rtxn).unwrap().id("primary_key").unwrap();

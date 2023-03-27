@@ -2,6 +2,7 @@ pub use self::facet::{FacetDistribution, Filter, DEFAULT_VALUES_PER_FACET};
 pub use self::matches::{
     FormatOptions, MatchBounds, Matcher, MatcherBuilder, MatchingWord, MatchingWords,
 };
+use self::new::{QueryGraph, SearchLogger};
 use crate::{
     execute_search, AscDesc, DefaultSearchLogger, DocumentId, Index, Result, SearchContext,
 };
@@ -106,7 +107,7 @@ impl<'a> Search<'a> {
         Ok(self.authorize_typos && index_authorizes_typos)
     }
 
-    pub fn execute(&self) -> Result<SearchResult> {
+    pub fn execute(&mut self) -> Result<SearchResult> {
         let mut ctx = SearchContext::new(self.index, self.rtxn);
         execute_search(
             &mut ctx,
@@ -119,6 +120,29 @@ impl<'a> Search<'a> {
             &mut DefaultSearchLogger,
             &mut DefaultSearchLogger,
         )
+    }
+    pub fn execute_with_logger<'e, L: SearchLogger<QueryGraph>>(
+        self,
+        mut logger: L,
+        mut finish: impl FnMut(L, &mut SearchContext<'e>),
+    ) -> Result<SearchResult>
+    where
+        'a: 'e,
+    {
+        let mut ctx = SearchContext::new(self.index, self.rtxn);
+        let r = execute_search(
+            &mut ctx,
+            &self.query,
+            self.terms_matching_strategy,
+            &self.filter,
+            self.offset,
+            self.limit,
+            Some(self.words_limit),
+            &mut DefaultSearchLogger,
+            &mut logger,
+        )?;
+        finish(logger, &mut ctx);
+        Ok(r)
     }
 }
 

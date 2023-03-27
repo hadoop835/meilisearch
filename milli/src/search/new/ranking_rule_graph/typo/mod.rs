@@ -1,20 +1,22 @@
-use fxhash::FxHashSet;
 use roaring::RoaringBitmap;
 
+use super::condition_docids_cache::ComputedCondition;
 use super::{DeadEndsCache, RankingRuleGraph, RankingRuleGraphTrait};
 use crate::search::new::interner::{DedupInterner, Interned, MappedInterner};
 use crate::search::new::logger::SearchLogger;
 use crate::search::new::query_graph::QueryNodeData;
 use crate::search::new::query_term::{
-    LocatedQueryTerm, OneTypoSubTerm, Phrase, QueryTerm, TwoTypoSubTerm, ZeroTypoSubTerm, NumberOfTypos,
+    DerivationsSubset, LocatedQueryTermSubset, NumberOfTypos, QueryTerm, QueryTermSubset,
 };
+use crate::search::new::resolve_query_graph::compute_query_term_subset_docids;
 use crate::search::new::{QueryGraph, QueryNode, SearchContext};
 use crate::Result;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct TypoCondition {
-    full_term: Interned<QueryTerm>,
+    original_term: Interned<QueryTerm>,
     nbr_typos: NumberOfTypos,
+    subset: DerivationsSubset,
 }
 
 pub enum TypoGraph {}
@@ -26,118 +28,66 @@ impl RankingRuleGraphTrait for TypoGraph {
         ctx: &mut SearchContext,
         condition: &Self::Condition,
         universe: &RoaringBitmap,
-        // TODO: return type could be a Cow of roaring bitmap
-    ) -> Result<(RoaringBitmap, FxHashSet<Interned<String>>, FxHashSet<Interned<Phrase>>)> {
-        let SearchContext {
-            index,
-            txn,
-            db_cache,
-            word_interner,
-            phrase_interner,
-            term_interner,
-            term_docids,
-            zero_typo_subterm_interner,
-            one_typo_subterm_interner,
-            two_typo_subterm_interner,
-        } = ctx;
-        let TypoCondition { full_term, nbr_typos } = condition;
-        let full_term = term_interner.get_mut(*full_term);
-        let (subterm_docids, used_words, used_phrases) = match nbr_typos {
-            NumberOfTypos::Zero => {
-                let docids = term_docids.get_zero_typo_term_docids(
-                    index,
-                    txn,
-                    db_cache,
-                    zero_typo_subterm_interner,
-                    word_interner,
-                    phrase_interner,
-                    full_term.zero_typo,
-                )?;
-                let ZeroTypoSubTerm { phrase, zero_typo, prefix_of, synonyms, use_prefix_db } =
-                    zero_typo_subterm_interner.get(full_term.zero_typo);
-                let used_words = zero_typo
-                    .iter()
-                    .chain(prefix_of.iter())
-                    .chain(use_prefix_db.iter())
-                    .copied()
-                    .collect();
-                let used_phrases = phrase.iter().chain(synonyms.iter()).copied().collect();
-                (docids, used_words, used_phrases)
-            }
-            NumberOfTypos::One => {
-                let one_typo = if let Some(one_typo) = full_term.one_typo {
-                    one_typo
-                } else {
-                    todo!();
-                };
-                let docids = term_docids.get_one_typo_term_docids(
-                    index,
-                    txn,
-                    db_cache,
-                    one_typo_subterm_interner,
-                    word_interner,
-                    phrase_interner,
-                    one_typo,
-                )?;
-                let OneTypoSubTerm { split_words, one_typo } =
-                    one_typo_subterm_interner.get(one_typo);
+    ) -> Result<ComputedCondition> {
+        let TypoCondition { original_term, nbr_typos, subset } = condition;
 
-                let used_words = one_typo.iter().copied().collect();
-                let used_phrases = split_words.iter().copied().collect();
-                (docids, used_words, used_phrases)
-            }
-            NumberOfTypos::Two => {
-                let two_typo = if let Some(two_typo) = full_term.two_typo {
-                    two_typo
-                } else {
-                    todo!();
-                };
-                let docids = term_docids.get_two_typo_term_docids(
-                    index,
-                    txn,
-                    db_cache,
-                    two_typo_subterm_interner,
-                    word_interner,
-                    two_typo,
-                )?;
-                let TwoTypoSubTerm { two_typos } = two_typo_subterm_interner.get(two_typo);
-                let used_words = two_typos.iter().copied().collect();
-                (docids, used_words, FxHashSet::default())
-            }
+        let mut term_subset = QueryTermSubset {
+            original: *original_term,
+            zero_typo_subset: DerivationsSubset::Nothing,
+            one_typo_subset: DerivationsSubset::Nothing,
+            two_typo_subset: DerivationsSubset::Nothing,
         };
+        match nbr_typos {
+            NumberOfTypos::Zero => term_subset.zero_typo_subset = subset.clone(),
+            NumberOfTypos::One => term_subset.one_typo_subset = subset.clone(),
+            NumberOfTypos::Two => term_subset.two_typo_subset = subset.clone(),
+        }
 
-        Ok((universe & subterm_docids, used_words, used_phrases))
+        // maybe compute_query_term_subset_docids should accept a universe as argument
+        let mut docids = compute_query_term_subset_docids(ctx, &term_subset)?;
+        docids &= universe;
+
+        Ok(ComputedCondition {
+            docids,
+            universe_len: universe.len(),
+            from_subset: DerivationsSubset::Nothing,
+            to_subset: subset.clone(),
+        })
     }
 
     fn build_edges(
-        _ctx: &mut SearchContext,
+        ctx: &mut SearchContext,
         conditions_interner: &mut DedupInterner<Self::Condition>,
         _from_node: &QueryNode,
         to_node: &QueryNode,
     ) -> Result<Vec<(u8, Option<Interned<Self::Condition>>)>> {
         match &to_node.data {
-            QueryNodeData::Term(LocatedQueryTerm { value, positions }) => {
+            QueryNodeData::Term(LocatedQueryTermSubset { term_subset, positions }) => {
+                let original_full_term = ctx.term_interner.get(term_subset.original);
+
                 let mut edges = vec![];
                 // Ngrams have a base typo cost
                 // 2-gram -> equivalent to 1 typo
                 // 3-gram -> equivalent to 2 typos
+                let base_cost = positions.len().min(3) as u8;
 
-                // TODO: a term should have a max_nbr_typo field?
-                let base_cost = positions.len().min(2) as u8;
-
-                for nbr_typos in 0..=2 {
-                    let nbr_typos = match nbr_typos {
-                        0 => NumberOfTypos::Zero,
-                        1 => NumberOfTypos::One,
-                        2 => NumberOfTypos::Two,
+                for nbr_typos in 0..=original_full_term.max_nbr_typos {
+                    let (subset, nbr_typos) = match nbr_typos {
+                        0 => (&term_subset.zero_typo_subset, NumberOfTypos::Zero),
+                        1 => (&term_subset.one_typo_subset, NumberOfTypos::One),
+                        2 => (&term_subset.two_typo_subset, NumberOfTypos::Two),
                         _ => panic!(),
                     };
+                    if matches!(subset, DerivationsSubset::Nothing) {
+                        continue;
+                    }
                     edges.push((
                         nbr_typos as u8 + base_cost,
-                        Some(
-                            conditions_interner
-                                .insert(TypoCondition { full_term: *value, nbr_typos }),
-                        ),
+                        Some(conditions_interner.insert(TypoCondition {
+                            original_term: term_subset.original,
+                            nbr_typos,
+                            subset: subset.clone(),
+                        })),
                     ));
                 }
                 Ok(edges)
@@ -160,9 +110,10 @@ impl RankingRuleGraphTrait for TypoGraph {
     }
 
     fn label_for_condition(ctx: &mut SearchContext, condition: &Self::Condition) -> Result<String> {
-        let TypoCondition { full_term, nbr_typos } = condition;
-        let full_term = ctx.term_interner.get(*full_term);
-        let original = ctx.word_interner.get(full_term.original);
-        Ok(format!("{original} : {nbr_typos:?}"))
+        let TypoCondition { original_term, nbr_typos, subset: _ } = condition;
+        let original_term = ctx.term_interner.get(*original_term);
+        let original = ctx.word_interner.get(original_term.original);
+
+        Ok(format!("{original}: {nbr_typos:?}"))
     }
 }

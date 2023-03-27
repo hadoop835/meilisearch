@@ -1,7 +1,10 @@
 use std::collections::HashSet;
 
 use super::interner::{FixedSizeInterner, Interned};
-use super::query_term::{self, number_of_typos_allowed, LocatedQueryTerm};
+use super::query_term::{
+    self, number_of_typos_allowed, DerivationsSubset, LocatedQueryTerm, LocatedQueryTermSubset,
+    QueryTermSubset,
+};
 use super::small_bitmap::SmallBitmap;
 use super::SearchContext;
 use crate::Result;
@@ -23,7 +26,7 @@ pub struct QueryNode {
 }
 #[derive(Clone)]
 pub enum QueryNodeData {
-    Term(LocatedQueryTerm),
+    Term(LocatedQueryTermSubset),
     Deleted,
     Start,
     End,
@@ -83,26 +86,6 @@ pub struct QueryGraph {
     pub nodes: FixedSizeInterner<QueryNode>,
 }
 
-// impl Default for QueryGraph {
-//     /// Create a new QueryGraph with two disconnected nodes: the root and end nodes.
-//     fn default() -> Self {
-//         let nodes = vec![
-//             QueryNode {
-//                 data: QueryNodeData::Start,
-//                 predecessors: SmallBitmap::new(QUERY_GRAPH_NODE_LENGTH_LIMIT),
-//                 successors: SmallBitmap::new(QUERY_GRAPH_NODE_LENGTH_LIMIT),
-//             },
-//             QueryNode {
-//                 data: QueryNodeData::End,
-//                 predecessors: SmallBitmap::new(QUERY_GRAPH_NODE_LENGTH_LIMIT),
-//                 successors: SmallBitmap::new(QUERY_GRAPH_NODE_LENGTH_LIMIT),
-//             },
-//         ];
-
-//         Self { root_node: 0, end_node: 1, nodes }
-//     }
-// }
-
 impl QueryGraph {
     /// Connect all the given predecessor nodes to the given successor node
     fn connect_to_node(
@@ -119,10 +102,12 @@ impl QueryGraph {
 
 impl QueryGraph {
     /// Build the query graph from the parsed user search query.
-    pub fn from_query(ctx: &mut SearchContext, terms: Vec<LocatedQueryTerm>) -> Result<QueryGraph> {
+    pub fn from_query(
+        ctx: &mut SearchContext,
+        // NOTE: the terms here must be consecutive
+        terms: &[LocatedQueryTerm],
+    ) -> Result<QueryGraph> {
         let nbr_typos = number_of_typos_allowed(ctx)?;
-
-        // let mut empty_nodes = vec![];
 
         let mut predecessors: Vec<HashSet<u16>> = vec![HashSet::new(), HashSet::new()];
         let mut successors: Vec<HashSet<u16>> = vec![HashSet::new(), HashSet::new()];
@@ -134,26 +119,25 @@ impl QueryGraph {
         let (mut prev2, mut prev1, mut prev0): (Vec<u16>, Vec<u16>, Vec<u16>) =
             (vec![], vec![], vec![root_node]);
 
-        for term_idx in 0..terms.len() {
-            let term0 = &terms[term_idx];
-
+        let original_terms_len = terms.len();
+        for term_idx in 0..original_terms_len {
             let mut new_nodes = vec![];
             let new_node_idx = add_node(
                 &mut nodes_data,
-                QueryNodeData::Term(term0.clone()),
+                QueryNodeData::Term(LocatedQueryTermSubset {
+                    term_subset: QueryTermSubset {
+                        original: Interned::from_raw(term_idx as u16),
+                        zero_typo_subset: DerivationsSubset::All,
+                        one_typo_subset: DerivationsSubset::All,
+                        two_typo_subset: DerivationsSubset::All,
+                    },
+                    positions: terms[term_idx].positions.clone(),
+                }),
                 &prev0,
                 &mut successors,
                 &mut predecessors,
             );
             new_nodes.push(new_node_idx);
-            // if term0.is_empty(
-            //     &ctx.term_interner,
-            //     &ctx.zero_typo_subterm_interner,
-            //     &ctx.one_typo_subterm_interner,
-            //     &ctx.two_typo_subterm_interner,
-            // ) {
-            //     empty_nodes.push(new_node_idx);
-            // }
 
             if !prev1.is_empty() {
                 if let Some(ngram) =
@@ -161,7 +145,15 @@ impl QueryGraph {
                 {
                     let ngram_idx = add_node(
                         &mut nodes_data,
-                        QueryNodeData::Term(ngram),
+                        QueryNodeData::Term(LocatedQueryTermSubset {
+                            term_subset: QueryTermSubset {
+                                original: ngram.value,
+                                zero_typo_subset: DerivationsSubset::All,
+                                one_typo_subset: DerivationsSubset::All,
+                                two_typo_subset: DerivationsSubset::All,
+                            },
+                            positions: ngram.positions,
+                        }),
                         &prev1,
                         &mut successors,
                         &mut predecessors,
@@ -175,7 +167,15 @@ impl QueryGraph {
                 {
                     let ngram_idx = add_node(
                         &mut nodes_data,
-                        QueryNodeData::Term(ngram),
+                        QueryNodeData::Term(LocatedQueryTermSubset {
+                            term_subset: QueryTermSubset {
+                                original: ngram.value,
+                                zero_typo_subset: DerivationsSubset::All,
+                                one_typo_subset: DerivationsSubset::All,
+                                two_typo_subset: DerivationsSubset::All,
+                            },
+                            positions: ngram.positions,
+                        }),
                         &prev2,
                         &mut successors,
                         &mut predecessors,
@@ -272,7 +272,7 @@ impl QueryGraph {
     pub fn remove_words_starting_at_position(&mut self, position: i8) -> bool {
         let mut nodes_to_remove_keeping_edges = vec![];
         for (node_idx, node) in self.nodes.iter() {
-            let QueryNodeData::Term(LocatedQueryTerm { value: _, positions }) = &node.data else { continue };
+            let QueryNodeData::Term(LocatedQueryTermSubset { term_subset: _, positions  }) = &node.data else { continue };
             if positions.start() == &position {
                 nodes_to_remove_keeping_edges.push(node_idx);
             }

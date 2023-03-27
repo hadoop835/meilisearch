@@ -12,6 +12,18 @@ impl<T> Clone for SmallBitmap<T> {
         Self { internal: self.internal.clone(), _phantom: PhantomData }
     }
 }
+// impl<T> PartialEq for SmallBitmap<T> {
+//     fn eq(&self, other: &Self) -> bool {
+//         self.internal == other.internal
+//     }
+// }
+// impl<T> Eq for SmallBitmap<T> {}
+// impl<T> std::hash::Hash for SmallBitmap<T> {
+//     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+//         self.internal.hash(state);
+//     }
+// }
+
 impl<T> SmallBitmap<T> {
     pub fn for_interned_values_in(interner: &FixedSizeInterner<T>) -> Self {
         Self::new(interner.len())
@@ -78,7 +90,7 @@ impl<T> SmallBitmap<T> {
         self.internal.iter().map(|x| Interned::from_raw(x))
     }
 }
-#[derive(Clone)]
+#[derive(Clone)] //, PartialEq, Eq, Hash)]
 pub enum SmallBitmapInternal {
     Tiny(u64),
     Small(Box<[u64]>),

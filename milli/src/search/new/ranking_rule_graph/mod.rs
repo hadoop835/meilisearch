@@ -15,20 +15,18 @@ mod proximity;
 /// Implementation of the `typo` ranking rule
 mod typo;
 
-mod attribute_rank;
-
 use std::hash::Hash;
 
 pub use condition_docids_cache::ConditionDocIdsCache;
 pub use dead_ends_cache::DeadEndsCache;
-use fxhash::FxHashSet;
-pub use proximity::{ProximityCondition, ProximityGraph};
+// pub use proximity::{ProximityCondition, ProximityGraph};
 use roaring::RoaringBitmap;
 pub use typo::{TypoCondition, TypoGraph};
 
+use self::condition_docids_cache::ComputedCondition;
+
 use super::interner::{DedupInterner, FixedSizeInterner, Interned, MappedInterner};
 use super::logger::SearchLogger;
-use super::query_term::Phrase;
 use super::small_bitmap::SmallBitmap;
 use super::{QueryGraph, QueryNode, SearchContext};
 use crate::Result;
@@ -85,7 +83,7 @@ pub trait RankingRuleGraphTrait: Sized {
         ctx: &mut SearchContext,
         condition: &Self::Condition,
         universe: &RoaringBitmap,
-    ) -> Result<(RoaringBitmap, FxHashSet<Interned<String>>, FxHashSet<Interned<Phrase>>)>;
+    ) -> Result<ComputedCondition>;
 
     /// Return the costs and conditions of the edges going from the source node to the destination node
     fn build_edges(

@@ -36,7 +36,6 @@ That is we find the documents where either:
 - OR: `pretty` is 2-close to `house` AND `house` is 1-close to `by`
 */
 
-use std::collections::HashSet;
 use std::ops::ControlFlow;
 
 use roaring::RoaringBitmap;
@@ -45,20 +44,19 @@ use super::interner::MappedInterner;
 use super::logger::SearchLogger;
 use super::query_graph::QueryNode;
 use super::ranking_rule_graph::{
-    ConditionDocIdsCache, DeadEndsCache, ProximityGraph, RankingRuleGraph, RankingRuleGraphTrait,
-    TypoGraph,
+    ConditionDocIdsCache, DeadEndsCache, /*ProximityGraph,*/ RankingRuleGraph,
+    RankingRuleGraphTrait, TypoGraph,
 };
 use super::small_bitmap::SmallBitmap;
 use super::{QueryGraph, RankingRule, RankingRuleOutput, SearchContext};
-use crate::search::new::query_graph::QueryNodeData;
 use crate::Result;
 
-pub type Proximity = GraphBasedRankingRule<ProximityGraph>;
-impl Default for GraphBasedRankingRule<ProximityGraph> {
-    fn default() -> Self {
-        Self::new("proximity".to_owned())
-    }
-}
+// pub type Proximity = GraphBasedRankingRule<ProximityGraph>;
+// impl Default for GraphBasedRankingRule<ProximityGraph> {
+//     fn default() -> Self {
+//         Self::new("proximity".to_owned())
+//     }
+// }
 pub type Typo = GraphBasedRankingRule<TypoGraph>;
 impl Default for GraphBasedRankingRule<TypoGraph> {
     fn default() -> Self {
@@ -233,12 +231,9 @@ impl<'ctx, G: RankingRuleGraphTrait> RankingRule<'ctx, QueryGraph> for GraphBase
                 for (latest_condition_path_idx, &latest_condition) in path.iter().enumerate() {
                     visited_conditions.push(latest_condition);
 
-                    let condition_docids = condition_docids_cache.get_condition_docids(
-                        ctx,
-                        latest_condition,
-                        graph,
-                        &universe,
-                    )?;
+                    let condition_docids = &condition_docids_cache
+                        .get_computed_condition(ctx, latest_condition, graph, &universe)?
+                        .docids;
 
                     // If the edge is empty, then the path will be empty as well, we update the graph
                     // and caches accordingly and skip to the next candidate path.
@@ -299,8 +294,9 @@ impl<'ctx, G: RankingRuleGraphTrait> RankingRule<'ctx, QueryGraph> for GraphBase
                                 if forbidden.contains(*next_condition) {
                                     continue;
                                 }
-                                let next_condition_docids = condition_docids_cache
-                                    .get_condition_docids(ctx, *next_condition, graph, &universe)?;
+                                let next_condition_docids = &condition_docids_cache
+                                    .get_computed_condition(ctx, *next_condition, graph, &universe)?
+                                    .docids;
 
                                 if past_path_docids.is_disjoint(next_condition_docids) {
                                     cursor.forbid_condition(*next_condition);
@@ -343,46 +339,42 @@ impl<'ctx, G: RankingRuleGraphTrait> RankingRule<'ctx, QueryGraph> for GraphBase
         // that was used to compute this bucket
         // But we only do it in case the bucket length is >1, because otherwise
         // we know the child ranking rule won't be called anyway
-        let mut next_query_graph = original_graph.query_graph;
-        if bucket.len() > 1 {
-            next_query_graph.simplify();
-            // 1. Gather all the words and phrases used in the computation of this bucket
-            let mut used_words = HashSet::new();
-            let mut used_phrases = HashSet::new();
-            for condition in used_conditions.iter() {
-                let (ws, ps) =
-                    condition_docids_cache.get_condition_used_words_and_phrases(condition);
-                used_words.extend(ws);
-                used_phrases.extend(ps);
-            }
-            // 2. Remove the unused words and phrases from all the nodes in the graph
-            let mut nodes_to_remove = vec![];
-            for (node_id, node) in next_query_graph.nodes.iter_mut() {
-                let term = match &mut node.data {
-                    QueryNodeData::Term(term) => term,
-                    QueryNodeData::Deleted | QueryNodeData::Start | QueryNodeData::End => continue,
-                };
-                if let Some(new_term) = ctx.term_interner.get(term.value).removing_forbidden_terms(
-                    &used_words,
-                    &used_phrases,
-                    &mut ctx.zero_typo_subterm_interner,
-                    &mut ctx.one_typo_subterm_interner,
-                    &mut ctx.two_typo_subterm_interner,
-                ) {
-                    if new_term.is_empty(
-                        &ctx.zero_typo_subterm_interner,
-                        &ctx.one_typo_subterm_interner,
-                        &ctx.two_typo_subterm_interner,
-                    ) {
-                        nodes_to_remove.push(node_id);
-                    } else {
-                        term.value = ctx.term_interner.push(new_term);
-                    }
-                }
-            }
-            // 3. Remove the empty nodes from the graph
-            next_query_graph.remove_nodes(&nodes_to_remove);
-        }
+        let /*mut*/ next_query_graph = original_graph.query_graph;
+
+        // TODO: reimplement this better
+        // if bucket.len() > 1 {
+        //     next_query_graph.simplify();
+        //     // 1. Gather all the words and phrases used in the computation of this bucket
+        //     let mut used_words = HashSet::new();
+        //     let mut used_phrases = HashSet::new();
+        //     for condition in used_conditions.iter() {
+        //         let (ws, ps) =
+        //             condition_docids_cache.get_condition_used_words_and_phrases(condition);
+        //         used_words.extend(ws);
+        //         used_phrases.extend(ps);
+        //     }
+        //     // 2. Remove the unused words and phrases from all the nodes in the graph
+        //     let mut nodes_to_remove = vec![];
+        //     for (node_id, node) in next_query_graph.nodes.iter_mut() {
+        //         let term = match &mut node.data {
+        //             QueryNodeData::Term(term) => term,
+        //             QueryNodeData::Deleted | QueryNodeData::Start | QueryNodeData::End => continue,
+        //         };
+        //         if let Some(new_term) = ctx
+        //             .term_interner
+        //             .get(term.value)
+        //             .removing_forbidden_terms(&used_words, &used_phrases)
+        //         {
+        //             if new_term.is_empty() {
+        //                 nodes_to_remove.push(node_id);
+        //             } else {
+        //                 term.value = ctx.term_interner.push(new_term);
+        //             }
+        //         }
+        //     }
+        //     // 3. Remove the empty nodes from the graph
+        //     next_query_graph.remove_nodes(&nodes_to_remove);
+        // }
 
         self.state = Some(state);
 

@@ -4,6 +4,7 @@ use roaring::RoaringBitmap;
 
 use super::logger::SearchLogger;
 use super::query_graph::QueryNodeData;
+use super::query_term::LocatedQueryTermSubset;
 use super::resolve_query_graph::resolve_query_graph;
 use super::{QueryGraph, RankingRule, RankingRuleOutput, SearchContext};
 use crate::{Result, TermsMatchingStrategy};
@@ -46,8 +47,11 @@ impl<'ctx> RankingRule<'ctx, QueryGraph> for Words {
                 let mut all_positions = BTreeSet::new();
                 for (_, n) in parent_query_graph.nodes.iter() {
                     match &n.data {
-                        QueryNodeData::Term(term) => {
-                            all_positions.extend(term.positions.clone());
+                        QueryNodeData::Term(LocatedQueryTermSubset {
+                            term_subset: _,
+                            positions,
+                        }) => {
+                            all_positions.extend(positions.clone());
                         }
                         QueryNodeData::Deleted | QueryNodeData::Start | QueryNodeData::End => {}
                     }

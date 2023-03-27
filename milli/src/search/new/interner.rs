@@ -126,6 +126,9 @@ impl<T> Default for Interner<T> {
 }
 
 impl<T> Interner<T> {
+    pub fn from_vec(v: Vec<T>) -> Self {
+        Self { stable_store: v }
+    }
     pub fn get(&self, interned: Interned<T>) -> &T {
         &self.stable_store[interned.idx as usize]
     }
