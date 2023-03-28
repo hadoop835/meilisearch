@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::cmp::Ordering;
 
 use super::interner::{FixedSizeInterner, Interned};
 use super::query_term::{
@@ -87,20 +87,6 @@ pub struct QueryGraph {
 }
 
 impl QueryGraph {
-    /// Connect all the given predecessor nodes to the given successor node
-    fn connect_to_node(
-        &mut self,
-        from_nodes: &[Interned<QueryNode>],
-        to_node: Interned<QueryNode>,
-    ) {
-        for &from_node in from_nodes {
-            self.nodes.get_mut(from_node).successors.insert(to_node);
-            self.nodes.get_mut(to_node).predecessors.insert(from_node);
-        }
-    }
-}
-
-impl QueryGraph {
     /// Build the query graph from the parsed user search query.
     pub fn from_query(
         ctx: &mut SearchContext,
@@ -109,8 +95,6 @@ impl QueryGraph {
     ) -> Result<QueryGraph> {
         let nbr_typos = number_of_typos_allowed(ctx)?;
 
-        let mut predecessors: Vec<HashSet<u16>> = vec![HashSet::new(), HashSet::new()];
-        let mut successors: Vec<HashSet<u16>> = vec![HashSet::new(), HashSet::new()];
         let mut nodes_data: Vec<QueryNodeData> = vec![QueryNodeData::Start, QueryNodeData::End];
         let root_node = 0;
         let end_node = 1;
@@ -133,9 +117,6 @@ impl QueryGraph {
                     },
                     positions: terms[term_idx].positions.clone(),
                 }),
-                &prev0,
-                &mut successors,
-                &mut predecessors,
             );
             new_nodes.push(new_node_idx);
 
@@ -154,9 +135,6 @@ impl QueryGraph {
                             },
                             positions: ngram.positions,
                         }),
-                        &prev1,
-                        &mut successors,
-                        &mut predecessors,
                     );
                     new_nodes.push(ngram_idx);
                 }
@@ -176,9 +154,6 @@ impl QueryGraph {
                             },
                             positions: ngram.positions,
                         }),
-                        &prev2,
-                        &mut successors,
-                        &mut predecessors,
                     );
                     new_nodes.push(ngram_idx);
                 }
@@ -196,29 +171,12 @@ impl QueryGraph {
                 successors: SmallBitmap::new(nodes_data.len() as u16),
             },
         );
-        for (node_idx, ((node_data, predecessors), successors)) in nodes_data
-            .into_iter()
-            .zip(predecessors.into_iter())
-            .zip(successors.into_iter())
-            .enumerate()
-        {
+        for (node_idx, node_data) in nodes_data.into_iter().enumerate() {
             let node = nodes.get_mut(Interned::from_raw(node_idx as u16));
             node.data = node_data;
-            for x in predecessors {
-                node.predecessors.insert(Interned::from_raw(x));
-            }
-            for x in successors {
-                node.successors.insert(Interned::from_raw(x));
-            }
         }
         let mut graph = QueryGraph { root_node, end_node, nodes };
-
-        graph.connect_to_node(
-            prev0.into_iter().map(Interned::from_raw).collect::<Vec<_>>().as_slice(),
-            end_node,
-        );
-        // let empty_nodes = empty_nodes.into_iter().map(Interned::from_raw).collect::<Vec<_>>();
-        // graph.remove_nodes_keep_edges(&empty_nodes);
+        graph.rebuild_edges();
 
         Ok(graph)
     }
@@ -242,27 +200,55 @@ impl QueryGraph {
             node.predecessors.clear();
             node.successors.clear();
         }
+        self.rebuild_edges();
     }
-    /// Remove the given nodes, connecting all their predecessors to all their successors.
-    pub fn remove_nodes_keep_edges(&mut self, nodes: &[Interned<QueryNode>]) {
-        for &node_id in nodes {
-            let node = self.nodes.get(node_id);
-            let old_node_pred = node.predecessors.clone();
-            let old_node_succ = node.successors.clone();
-            for pred in old_node_pred.iter() {
-                let pred_successors = &mut self.nodes.get_mut(pred).successors;
-                pred_successors.remove(node_id);
-                pred_successors.union(&old_node_succ);
-            }
-            for succ in old_node_succ.iter() {
-                let succ_predecessors = &mut self.nodes.get_mut(succ).predecessors;
-                succ_predecessors.remove(node_id);
-                succ_predecessors.union(&old_node_pred);
-            }
-            let node = self.nodes.get_mut(node_id);
-            node.data = QueryNodeData::Deleted;
-            node.predecessors.clear();
+
+    fn rebuild_edges(&mut self) {
+        for (_, node) in self.nodes.iter_mut() {
             node.successors.clear();
+            node.predecessors.clear();
+        }
+        for node_id in self.nodes.indexes() {
+            let node = self.nodes.get(node_id);
+            let end_position = match &node.data {
+                QueryNodeData::Term(term) => *term.positions.end(),
+                QueryNodeData::Start => -1,
+                QueryNodeData::Deleted => continue,
+                QueryNodeData::End => continue,
+            };
+            let successors = {
+                let mut successors = SmallBitmap::for_interned_values_in(&self.nodes);
+                let mut min = i8::MAX;
+                for (node_id, node) in self.nodes.iter() {
+                    let start_position = match &node.data {
+                        QueryNodeData::Term(term) => *term.positions.start(),
+                        QueryNodeData::End => i8::MAX,
+                        QueryNodeData::Start => continue,
+                        QueryNodeData::Deleted => continue,
+                    };
+                    if start_position <= end_position {
+                        continue;
+                    }
+                    match start_position.cmp(&min) {
+                        Ordering::Less => {
+                            min = start_position;
+                            successors.clear();
+                            successors.insert(node_id);
+                        }
+                        Ordering::Equal => {
+                            successors.insert(node_id);
+                        }
+                        Ordering::Greater => continue,
+                    }
+                }
+                successors
+            };
+            let node = self.nodes.get_mut(node_id);
+            node.successors = successors.clone();
+            for successor in successors.iter() {
+                let successor = self.nodes.get_mut(successor);
+                successor.predecessors.insert(node_id);
+            }
         }
     }
 
@@ -270,57 +256,22 @@ impl QueryGraph {
     /// the predecessors of these nodes to their successors.
     /// Return `true` if any node was removed.
     pub fn remove_words_starting_at_position(&mut self, position: i8) -> bool {
-        let mut nodes_to_remove_keeping_edges = vec![];
+        let mut nodes_to_remove = vec![];
         for (node_idx, node) in self.nodes.iter() {
             let QueryNodeData::Term(LocatedQueryTermSubset { term_subset: _, positions  }) = &node.data else { continue };
             if positions.start() == &position {
-                nodes_to_remove_keeping_edges.push(node_idx);
+                nodes_to_remove.push(node_idx);
             }
         }
 
-        self.remove_nodes_keep_edges(&nodes_to_remove_keeping_edges);
+        self.remove_nodes(&nodes_to_remove);
 
-        self.simplify();
-        !nodes_to_remove_keeping_edges.is_empty()
-    }
-
-    /// Simplify the query graph by removing all nodes that are disconnected from
-    /// the start or end nodes.
-    pub fn simplify(&mut self) {
-        loop {
-            let mut nodes_to_remove = vec![];
-            for (node_idx, node) in self.nodes.iter() {
-                if (!matches!(node.data, QueryNodeData::End | QueryNodeData::Deleted)
-                    && node.successors.is_empty())
-                    || (!matches!(node.data, QueryNodeData::Start | QueryNodeData::Deleted)
-                        && node.predecessors.is_empty())
-                {
-                    nodes_to_remove.push(node_idx);
-                }
-            }
-            if nodes_to_remove.is_empty() {
-                break;
-            } else {
-                self.remove_nodes(&nodes_to_remove);
-            }
-        }
+        !nodes_to_remove.is_empty()
     }
 }
 
-fn add_node(
-    nodes_data: &mut Vec<QueryNodeData>,
-    node_data: QueryNodeData,
-    from_nodes: &Vec<u16>,
-    successors: &mut Vec<HashSet<u16>>,
-    predecessors: &mut Vec<HashSet<u16>>,
-) -> u16 {
-    successors.push(HashSet::new());
-    predecessors.push(HashSet::new());
+fn add_node(nodes_data: &mut Vec<QueryNodeData>, node_data: QueryNodeData) -> u16 {
     let new_node_idx = nodes_data.len() as u16;
     nodes_data.push(node_data);
-    for &from_node in from_nodes {
-        successors[from_node as usize].insert(new_node_idx);
-        predecessors[new_node_idx as usize].insert(from_node);
-    }
     new_node_idx
 }

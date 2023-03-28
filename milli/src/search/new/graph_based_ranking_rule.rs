@@ -344,8 +344,6 @@ impl<'ctx, G: RankingRuleGraphTrait> RankingRule<'ctx, QueryGraph> for GraphBase
         let mut next_query_graph = original_graph.query_graph.clone();
 
         if bucket.len() > 1 {
-            next_query_graph.simplify();
-
             let mut subset_for_term = ctx.term_interner.map_indexes(QueryTermSubset::empty);
             for condition in used_conditions.iter() {
                 let subsets = condition_docids_cache.get_subsets_used_by_condition(condition);
