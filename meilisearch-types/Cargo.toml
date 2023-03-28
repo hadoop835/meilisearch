@@ -13,6 +13,7 @@ license.workspace = true
 [dependencies]
 actix-web = { version = "4.2.1", default-features = false }
 anyhow = "1.0.65"
+bincode = { version = "2.0.0-rc.2", features = ["serde"] }
 convert_case = "0.6.0"
 csv = "1.1.6"
 deserr = "0.5.0"
@@ -30,7 +31,7 @@ serde_json = "1.0.85"
 tar = "0.4.38"
 tempfile = "3.3.0"
 thiserror = "1.0.30"
-time = { version = "0.3.7", features = ["serde-well-known", "formatting", "parsing", "macros"] }
+time = { version = "0.3.20", git = "https://github.com/irevoire/time", branch = "bincode-support", features = ["serde-well-known", "formatting", "parsing", "macros", "bincode"] }
 tokio = "1.24"
 uuid = { version = "1.1.2", features = ["serde", "v4"] }
 

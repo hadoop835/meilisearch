@@ -2,6 +2,7 @@ use std::convert::Infallible;
 use std::hash::Hash;
 use std::str::FromStr;
 
+use bincode::{Decode, Encode};
 use deserr::{DeserializeError, Deserr, MergeWithError, ValuePointerRef};
 use enum_iterator::Sequence;
 use milli::update::Setting;
@@ -95,7 +96,7 @@ pub struct PatchApiKey {
     pub name: Setting<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Encode, Decode)]
 pub struct Key {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -181,7 +182,20 @@ fn parse_expiration_date(
     }
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize, Debug, Eq, PartialEq, Hash, Sequence, Deserr)]
+#[derive(
+    Copy,
+    Clone,
+    Serialize,
+    Deserialize,
+    Debug,
+    Eq,
+    PartialEq,
+    Hash,
+    Sequence,
+    Deserr,
+    Encode,
+    Decode,
+)]
 #[repr(u8)]
 pub enum Action {
     #[serde(rename = "*")]

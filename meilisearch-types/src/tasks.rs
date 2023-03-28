@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::fmt::{Display, Write};
 use std::str::FromStr;
 
+use bincode::{Decode, Encode};
 use enum_iterator::Sequence;
 use milli::update::IndexDocumentsMethod;
 use roaring::RoaringBitmap;
@@ -17,7 +18,7 @@ use crate::InstanceUid;
 
 pub type TaskId = u32;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Encode, Decode)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
     pub uid: TaskId,
@@ -81,7 +82,7 @@ impl Task {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Encode, Decode)]
 #[serde(rename_all = "camelCase")]
 pub enum KindWithContent {
     DocumentAdditionOrUpdate {
@@ -134,7 +135,7 @@ pub enum KindWithContent {
     SnapshotCreation,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 #[serde(rename_all = "camelCase")]
 pub struct IndexSwap {
     pub indexes: (String, String),
@@ -310,7 +311,9 @@ impl From<&KindWithContent> for Option<Details> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Sequence)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Sequence, Encode, Decode,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum Status {
     Enqueued,
@@ -472,7 +475,7 @@ impl fmt::Display for ParseTaskKindError {
 }
 impl std::error::Error for ParseTaskKindError {}
 
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, Encode, Decode)]
 pub enum Details {
     DocumentAdditionOrUpdate { received_documents: u64, indexed_documents: Option<u64> },
     SettingsUpdate { settings: Box<Settings<Unchecked>> },

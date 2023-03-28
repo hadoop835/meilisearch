@@ -31,6 +31,7 @@ mod uuid_codec;
 pub type Result<T> = std::result::Result<T, Error>;
 pub type TaskId = u32;
 
+use std::borrow::Cow;
 use std::ops::{Bound, RangeBounds};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -43,7 +44,7 @@ pub use error::Error;
 use file_store::FileStore;
 use meilisearch_types::error::ResponseError;
 use meilisearch_types::heed::types::{OwnedType, SerdeBincode, SerdeJson, Str};
-use meilisearch_types::heed::{self, Database, Env, RoTxn};
+use meilisearch_types::heed::{self, BytesDecode, BytesEncode, Database, Env, RoTxn};
 use meilisearch_types::milli;
 use meilisearch_types::milli::documents::DocumentsBatchBuilder;
 use meilisearch_types::milli::update::IndexerConfig;
@@ -243,6 +244,35 @@ pub struct IndexSchedulerOptions {
     pub autobatching_enabled: bool,
 }
 
+pub use bincode::{Decode, Encode};
+
+pub struct Bincode<T>(std::marker::PhantomData<T>);
+
+impl<'a, T: 'a> BytesEncode<'a> for Bincode<T>
+where
+    T: Encode,
+{
+    type EItem = T;
+
+    fn bytes_encode(item: &'a Self::EItem) -> Option<Cow<[u8]>> {
+        bincode::encode_to_vec(item, bincode::config::standard()).ok().map(Cow::Owned)
+    }
+}
+
+impl<'a, T: 'a> BytesDecode<'a> for Bincode<T>
+where
+    T: Decode,
+{
+    type DItem = T;
+
+    fn bytes_decode(bytes: &'a [u8]) -> Option<Self::DItem> {
+        bincode::decode_from_slice(bytes, bincode::config::standard()).ok().map(|opt| opt.0)
+    }
+}
+
+unsafe impl<T> Send for Bincode<T> {}
+unsafe impl<T> Sync for Bincode<T> {}
+
 /// Structure which holds meilisearch's indexes and schedules the tasks
 /// to be performed on them.
 pub struct IndexScheduler {
@@ -259,7 +289,7 @@ pub struct IndexScheduler {
     pub(crate) file_store: FileStore,
 
     // The main database, it contains all the tasks accessible by their Id.
-    pub(crate) all_tasks: Database<OwnedType<BEU32>, SerdeJson<Task>>,
+    pub(crate) all_tasks: Database<OwnedType<BEU32>, Bincode<Task>>,
 
     /// All the tasks ids grouped by their status.
     // TODO we should not be able to serialize a `Status::Processing` in this database.

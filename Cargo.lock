@@ -203,7 +203,7 @@ dependencies = [
  "serde_urlencoded",
  "smallvec",
  "socket2",
- "time",
+ "time 0.3.17",
  "url",
 ]
 
@@ -449,6 +449,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "bincode"
+version = "2.0.0-rc.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7bb50c5a2ef4b9b1e7ae73e3a73b52ea24b20312d629f9c4df28260b7ad2c3c4"
+dependencies = [
+ "bincode_derive",
+ "serde",
+]
+
+[[package]]
+name = "bincode_derive"
+version = "2.0.0-rc.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a45a23389446d2dd25dc8e73a7a3b3c43522b630cac068927f0649d43d719d2"
+dependencies = [
+ "virtue",
 ]
 
 [[package]]
@@ -827,7 +846,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e859cd57d0710d9e06c381b550c06e76992472a8c6d527aecd2fc673dcc231fb"
 dependencies = [
  "percent-encoding",
- "time",
+ "time 0.3.17",
  "version_check",
 ]
 
@@ -1169,7 +1188,7 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror",
- "time",
+ "time 0.3.17",
  "uuid 1.2.2",
 ]
 
@@ -1755,7 +1774,7 @@ name = "heed-types"
 version = "0.7.2"
 source = "git+https://github.com/meilisearch/heed?tag=v0.12.5#4158a6c484752afaaf9e2530a6ee0e7ab0f24ee8"
 dependencies = [
- "bincode",
+ "bincode 1.3.3",
  "heed-traits",
  "serde",
  "serde_json",
@@ -1894,7 +1913,7 @@ version = "1.1.0"
 dependencies = [
  "anyhow",
  "big_s",
- "bincode",
+ "bincode 2.0.0-rc.2",
  "crossbeam",
  "csv",
  "derive_builder",
@@ -1914,7 +1933,7 @@ dependencies = [
  "synchronoise",
  "tempfile",
  "thiserror",
- "time",
+ "time 0.3.17",
  "uuid 1.2.2",
 ]
 
@@ -2152,7 +2171,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f33a20bb9cbf95572b2d2f40d7040c8d8c7ad09ae20e1f6513db6ef2564dfc5"
 dependencies = [
  "anyhow",
- "bincode",
+ "bincode 1.3.3",
  "byteorder",
  "encoding",
  "kanaria",
@@ -2180,7 +2199,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60c3b379251edadbac7a5fdb31e482274e11dae6ab6cc789d0d86cf34369cf49"
 dependencies = [
  "anyhow",
- "bincode",
+ "bincode 1.3.3",
  "byteorder",
  "csv",
  "encoding",
@@ -2210,7 +2229,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2281747b98fdd46bcc54ce7fdb6870dad9f67ddb3dc086c47b6704f3e1178cd5"
 dependencies = [
  "anyhow",
- "bincode",
+ "bincode 1.3.3",
  "byteorder",
  "encoding_rs",
  "log",
@@ -2238,7 +2257,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af1c6668848f1d30d216c99093a3ed3fe125c105fa12a4aeed5a1861dc01dd52"
 dependencies = [
  "anyhow",
- "bincode",
+ "bincode 1.3.3",
  "byteorder",
  "lindera-core",
 ]
@@ -2249,7 +2268,7 @@ version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "693098007200fa43fd5cdc9ca8740f371327369672ce812cd87a1f6344971e31"
 dependencies = [
- "bincode",
+ "bincode 1.3.3",
  "byteorder",
  "encoding",
  "flate2",
@@ -2267,7 +2286,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b6b7240d097a8fc37ee8f90ebff02c4db0ba5325ecb0dacb6da3724596798c9"
 dependencies = [
  "anyhow",
- "bincode",
+ "bincode 1.3.3",
  "byteorder",
  "csv",
  "encoding_rs",
@@ -2288,7 +2307,7 @@ version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "abd3c5a4addeb61ca66788a3dd1fd51093e6cd8fea1d997042ada5aa60e8cc5e"
 dependencies = [
- "bincode",
+ "bincode 1.3.3",
  "byteorder",
  "encoding",
  "flate2",
@@ -2306,7 +2325,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "512bb1393a9281e0b13704319d1343b7931416865852d9d7b7c0178431518326"
 dependencies = [
  "anyhow",
- "bincode",
+ "bincode 1.3.3",
  "byteorder",
  "csv",
  "encoding",
@@ -2326,7 +2345,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f575a27f8ba67c15fe16ebf7d277a0ac04e8c8a0f72670ebc2443da9d41c450"
 dependencies = [
  "anyhow",
- "bincode",
+ "bincode 1.3.3",
  "byteorder",
  "csv",
  "encoding",
@@ -2528,7 +2547,7 @@ dependencies = [
  "tempfile",
  "termcolor",
  "thiserror",
- "time",
+ "time 0.3.17",
  "tokio",
  "tokio-stream",
  "toml",
@@ -2555,7 +2574,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
- "time",
+ "time 0.3.17",
  "uuid 1.2.2",
 ]
 
@@ -2565,6 +2584,7 @@ version = "1.1.0"
 dependencies = [
  "actix-web",
  "anyhow",
+ "bincode 2.0.0-rc.2",
  "convert_case 0.6.0",
  "csv",
  "deserr",
@@ -2584,7 +2604,7 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror",
- "time",
+ "time 0.3.20",
  "tokio",
  "uuid 1.2.2",
 ]
@@ -2619,7 +2639,8 @@ version = "1.1.0"
 dependencies = [
  "big_s",
  "bimap",
- "bincode",
+ "bincode 1.3.3",
+ "bincode 2.0.0-rc.2",
  "bstr 1.1.0",
  "byteorder",
  "charabia",
@@ -2660,7 +2681,7 @@ dependencies = [
  "smartstring",
  "tempfile",
  "thiserror",
- "time",
+ "time 0.3.17",
  "uuid 1.2.2",
 ]
 
@@ -3488,7 +3509,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
- "time",
+ "time 0.3.17",
 ]
 
 [[package]]
@@ -3607,7 +3628,7 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "thiserror",
- "time",
+ "time 0.3.17",
 ]
 
 [[package]]
@@ -3842,8 +3863,20 @@ checksum = "a561bf4617eebd33bca6434b988f39ed798e527f51a1e797d0ee4f61c0a38376"
 dependencies = [
  "itoa 1.0.5",
  "serde",
- "time-core",
- "time-macros",
+ "time-core 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "time-macros 0.2.6",
+]
+
+[[package]]
+name = "time"
+version = "0.3.20"
+source = "git+https://github.com/irevoire/time?branch=bincode-support#0d0b7e5d77afa02f84c913cee64dcce408da9bf5"
+dependencies = [
+ "bincode 2.0.0-rc.2",
+ "itoa 1.0.5",
+ "serde",
+ "time-core 0.1.0 (git+https://github.com/irevoire/time?branch=bincode-support)",
+ "time-macros 0.2.8",
 ]
 
 [[package]]
@@ -3853,12 +3886,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e153e1f1acaef8acc537e68b44906d2db6436e2b35ac2c6b42640fff91f00fd"
 
 [[package]]
+name = "time-core"
+version = "0.1.0"
+source = "git+https://github.com/irevoire/time?branch=bincode-support#0d0b7e5d77afa02f84c913cee64dcce408da9bf5"
+
+[[package]]
 name = "time-macros"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d967f99f534ca7e495c575c62638eebc2898a8c84c119b89e250477bc4ba16b2"
 dependencies = [
- "time-core",
+ "time-core 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "time-macros"
+version = "0.2.8"
+source = "git+https://github.com/irevoire/time?branch=bincode-support#0d0b7e5d77afa02f84c913cee64dcce408da9bf5"
+dependencies = [
+ "time-core 0.1.0 (git+https://github.com/irevoire/time?branch=bincode-support)",
 ]
 
 [[package]]
@@ -4128,7 +4174,7 @@ dependencies = [
  "git2",
  "rustversion",
  "thiserror",
- "time",
+ "time 0.3.17",
 ]
 
 [[package]]
@@ -4136,6 +4182,12 @@ name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
+
+[[package]]
+name = "virtue"
+version = "0.0.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b60dcd6a64dd45abf9bd426970c9843726da7fc08f44cd6fcebf68c21220a63"
 
 [[package]]
 name = "walkdir"
@@ -4448,7 +4500,7 @@ dependencies = [
  "hmac",
  "pbkdf2",
  "sha1",
- "time",
+ "time 0.3.17",
  "zstd 0.11.2+zstd.1.5.2",
 ]
 
