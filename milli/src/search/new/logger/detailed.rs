@@ -12,7 +12,7 @@ use crate::search::new::query_term::{
     Lazy, LocatedQueryTermSubset, OneTypoSubTerm, QueryTerm, TwoTypoSubTerm, ZeroTypoSubTerm,
 };
 use crate::search::new::ranking_rule_graph::{
-    DeadEndsCache, Edge, /*ProximityCondition, ProximityGraph,*/ RankingRuleGraph,
+    DeadEndsCache, Edge, ProximityCondition, ProximityGraph, RankingRuleGraph,
     RankingRuleGraphTrait, TypoCondition, TypoGraph,
 };
 use crate::search::new::{QueryGraph, QueryNode, RankingRule, SearchContext, SearchLogger};
@@ -41,14 +41,14 @@ pub enum SearchEvents {
     WordsState {
         query_graph: QueryGraph,
     },
-    // ProximityState {
-    //     graph: RankingRuleGraph<ProximityGraph>,
-    //     paths: Vec<Vec<Interned<ProximityCondition>>>,
-    //     dead_ends_cache: DeadEndsCache<ProximityCondition>,
-    //     universe: RoaringBitmap,
-    //     costs: MappedInterner<QueryNode, Vec<u64>>,
-    //     cost: u64,
-    // },
+    ProximityState {
+        graph: RankingRuleGraph<ProximityGraph>,
+        paths: Vec<Vec<Interned<ProximityCondition>>>,
+        dead_ends_cache: DeadEndsCache<ProximityCondition>,
+        universe: RoaringBitmap,
+        costs: MappedInterner<QueryNode, Vec<u64>>,
+        cost: u64,
+    },
     TypoState {
         graph: RankingRuleGraph<TypoGraph>,
         paths: Vec<Vec<Interned<TypoCondition>>>,
@@ -166,24 +166,24 @@ impl SearchLogger<QueryGraph> for DetailedSearchLogger {
         self.events.push(SearchEvents::WordsState { query_graph: query_graph.clone() });
     }
 
-    // fn log_proximity_state(
-    //     &mut self,
-    //     query_graph: &RankingRuleGraph<ProximityGraph>,
-    //     paths_map: &[Vec<Interned<ProximityCondition>>],
-    //     dead_ends_cache: &DeadEndsCache<ProximityCondition>,
-    //     universe: &RoaringBitmap,
-    //     costs: &MappedInterner<QueryNode, Vec<u64>>,
-    //     cost: u64,
-    // ) {
-    //     self.events.push(SearchEvents::ProximityState {
-    //         graph: query_graph.clone(),
-    //         paths: paths_map.to_vec(),
-    //         dead_ends_cache: dead_ends_cache.clone(),
-    //         universe: universe.clone(),
-    //         costs: costs.clone(),
-    //         cost,
-    //     })
-    // }
+    fn log_proximity_state(
+        &mut self,
+        query_graph: &RankingRuleGraph<ProximityGraph>,
+        paths_map: &[Vec<Interned<ProximityCondition>>],
+        dead_ends_cache: &DeadEndsCache<ProximityCondition>,
+        universe: &RoaringBitmap,
+        costs: &MappedInterner<QueryNode, Vec<u64>>,
+        cost: u64,
+    ) {
+        self.events.push(SearchEvents::ProximityState {
+            graph: query_graph.clone(),
+            paths: paths_map.to_vec(),
+            dead_ends_cache: dead_ends_cache.clone(),
+            universe: universe.clone(),
+            costs: costs.clone(),
+            cost,
+        })
+    }
 
     fn log_typo_state(
         &mut self,
@@ -354,39 +354,39 @@ results.{cur_ranking_rule}{cur_activated_id} {{
                     )
                     .unwrap();
                 }
-                // SearchEvents::ProximityState {
-                //     graph,
-                //     paths,
-                //     dead_ends_cache,
-                //     universe,
-                //     costs,
-                //     cost,
-                // } => {
-                //                     let cur_ranking_rule = timestamp.len() - 1;
-                //                     *timestamp.last_mut().unwrap() += 1;
-                //                     let cur_activated_id = activated_id(&timestamp);
-                //                     *timestamp.last_mut().unwrap() -= 1;
-                //                     let id = format!("{cur_ranking_rule}.{cur_activated_id}");
-                //                     let new_file_path = self.folder_path.join(format!("{id}.d2"));
-                //                     let mut new_file = std::fs::File::create(new_file_path).unwrap();
-                //                     Self::ranking_rule_graph_d2_description(
-                //                         ctx,
-                //                         graph,
-                //                         paths,
-                //                         dead_ends_cache,
-                //                         costs.clone(),
-                //                         &mut new_file,
-                //                     );
-                //                     writeln!(
-                //                         &mut file,
-                //                         "{id} {{
-                //     link: \"{id}.d2.svg\"
-                //     tooltip: \"cost {cost}, universe len: {}\"
-                // }}",
-                //                         universe.len()
-                //                     )
-                //                     .unwrap();
-                //                 }
+                SearchEvents::ProximityState {
+                    graph,
+                    paths,
+                    dead_ends_cache,
+                    universe,
+                    costs,
+                    cost,
+                } => {
+                    let cur_ranking_rule = timestamp.len() - 1;
+                    *timestamp.last_mut().unwrap() += 1;
+                    let cur_activated_id = activated_id(&timestamp);
+                    *timestamp.last_mut().unwrap() -= 1;
+                    let id = format!("{cur_ranking_rule}.{cur_activated_id}");
+                    let new_file_path = self.folder_path.join(format!("{id}.d2"));
+                    let mut new_file = std::fs::File::create(new_file_path).unwrap();
+                    Self::ranking_rule_graph_d2_description(
+                        ctx,
+                        graph,
+                        paths,
+                        dead_ends_cache,
+                        costs.clone(),
+                        &mut new_file,
+                    );
+                    writeln!(
+                        &mut file,
+                        "{id} {{
+                    link: \"{id}.d2.svg\"
+                    tooltip: \"cost {cost}, universe len: {}\"
+                }}",
+                        universe.len()
+                    )
+                    .unwrap();
+                }
                 SearchEvents::TypoState {
                     graph,
                     paths,

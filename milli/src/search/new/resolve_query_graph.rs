@@ -3,41 +3,30 @@
 use std::collections::VecDeque;
 
 use fxhash::FxHashMap;
-use heed::{BytesDecode, RoTxn};
+use heed::BytesDecode;
 use roaring::RoaringBitmap;
 
-use super::db_cache::DatabaseCache;
-use super::interner::{DedupInterner, Interned};
+use super::interner::Interned;
 use super::query_graph::QueryNodeData;
-use super::query_term::{
-    Lazy, OneTypoSubTerm, Phrase, QueryTermSubset, TwoTypoSubTerm, ZeroTypoSubTerm,
-};
+use super::query_term::{Phrase, QueryTermSubset};
 use super::small_bitmap::SmallBitmap;
 use super::{QueryGraph, SearchContext};
 use crate::search::new::query_term::LocatedQueryTermSubset;
-use crate::{CboRoaringBitmapCodec, Index, Result, RoaringBitmapCodec};
+use crate::{CboRoaringBitmapCodec, Result, RoaringBitmapCodec};
 
 #[derive(Default)]
-pub struct QueryTermDocIdsCache {
-    pub phrases: FxHashMap<Interned<Phrase>, RoaringBitmap>,
+pub struct PhraseDocIdsCache {
+    pub cache: FxHashMap<Interned<Phrase>, RoaringBitmap>,
 }
-impl QueryTermDocIdsCache {
+impl<'ctx> SearchContext<'ctx> {
     /// Get the document ids associated with the given phrase
-    pub fn get_phrase_docids<'s, 'ctx>(
-        &'s mut self,
-        index: &Index,
-        txn: &'ctx RoTxn,
-        db_cache: &mut DatabaseCache<'ctx>,
-        word_interner: &DedupInterner<String>,
-        phrase_interner: &DedupInterner<Phrase>,
-        phrase: Interned<Phrase>,
-    ) -> Result<&'s RoaringBitmap> {
-        if self.phrases.contains_key(&phrase) {
-            return Ok(&self.phrases[&phrase]);
+    pub fn get_phrase_docids(&mut self, phrase: Interned<Phrase>) -> Result<&RoaringBitmap> {
+        if self.term_docids.cache.contains_key(&phrase) {
+            return Ok(&self.term_docids.cache[&phrase]);
         };
-        let docids = resolve_phrase(index, txn, db_cache, word_interner, phrase_interner, phrase)?;
-        let _ = self.phrases.insert(phrase, docids);
-        let docids = &self.phrases[&phrase];
+        let docids = compute_phrase_docids(self, phrase)?;
+        let _ = self.term_docids.cache.insert(phrase, docids);
+        let docids = &self.term_docids.cache[&phrase];
         Ok(docids)
     }
 }
@@ -45,98 +34,27 @@ pub fn compute_query_term_subset_docids(
     ctx: &mut SearchContext,
     term: &QueryTermSubset,
 ) -> Result<RoaringBitmap> {
-    let SearchContext {
-        index,
-        txn,
-        db_cache,
-        word_interner,
-        phrase_interner,
-        term_interner,
-        term_docids,
-    } = ctx;
-    let full_term = term_interner.get_mut(term.original);
     let mut docids = RoaringBitmap::new();
-
-    // The order is important
-    if !term.two_typo_subset.is_empty() && full_term.two_typo.is_uninit() {
-        full_term.compute_fully_if_needed(index, txn, word_interner, phrase_interner)?;
-        assert!(full_term.one_typo.is_init());
-        assert!(full_term.two_typo.is_init());
-    } else if !term.one_typo_subset.is_empty() && full_term.one_typo.is_uninit() {
-        // TODO: do less work than this here!
-        full_term.compute_fully_if_needed(index, txn, word_interner, phrase_interner)?;
-        assert!(full_term.one_typo.is_init());
-    }
-
-    if !term.zero_typo_subset.is_empty() {
-        let ZeroTypoSubTerm { phrase, zero_typo, prefix_of, synonyms, use_prefix_db } =
-            &full_term.zero_typo;
-        for word in zero_typo.iter().chain(prefix_of.iter()) {
-            if let Some(word_docids) = db_cache.get_word_docids(index, txn, word_interner, *word)? {
-                docids |=
-                    RoaringBitmapCodec::bytes_decode(word_docids).ok_or(heed::Error::Decoding)?;
-            }
-        }
-        for phrase in phrase.iter().chain(synonyms.iter()) {
-            docids |= term_docids.get_phrase_docids(
-                index,
-                txn,
-                db_cache,
-                word_interner,
-                phrase_interner,
-                *phrase,
-            )?;
-        }
-
-        if let Some(prefix) = use_prefix_db {
-            if let Some(prefix_docids) =
-                db_cache.get_word_prefix_docids(index, txn, word_interner, *prefix)?
-            {
-                docids |=
-                    RoaringBitmapCodec::bytes_decode(prefix_docids).ok_or(heed::Error::Decoding)?;
-            }
+    for word in term.all_single_words_except_prefix_db(ctx)? {
+        if let Some(word_docids) = ctx.get_db_word_docids(word)? {
+            docids |= RoaringBitmapCodec::bytes_decode(word_docids).ok_or(heed::Error::Decoding)?;
         }
     }
-
-    if !term.one_typo_subset.is_empty() {
-        let OneTypoSubTerm { split_words, one_typo } =
-            if let Lazy::Init(t) = &full_term.one_typo { t } else { panic!() };
-        for word in one_typo.iter() {
-            if let Some(word_docids) = db_cache.get_word_docids(index, txn, word_interner, *word)? {
-                docids |=
-                    RoaringBitmapCodec::bytes_decode(word_docids).ok_or(heed::Error::Decoding)?;
-            }
-        }
-        for phrase in split_words.iter() {
-            docids |= term_docids.get_phrase_docids(
-                index,
-                txn,
-                db_cache,
-                word_interner,
-                phrase_interner,
-                *phrase,
-            )?;
-        }
+    for phrase in term.all_phrases(ctx)? {
+        docids |= ctx.get_phrase_docids(phrase)?;
     }
-    if !term.two_typo_subset.is_empty() {
-        let TwoTypoSubTerm { two_typos } = if let Lazy::Init(t) = &full_term.two_typo {
-            t
-        } else {
-            panic!();
-        };
 
-        for word in two_typos.iter() {
-            if let Some(word_docids) = db_cache.get_word_docids(index, txn, word_interner, *word)? {
-                docids |=
-                    RoaringBitmapCodec::bytes_decode(word_docids).ok_or(heed::Error::Decoding)?;
-            }
+    if let Some(prefix) = term.use_prefix_db(ctx) {
+        if let Some(prefix_docids) = ctx.get_db_word_prefix_docids(prefix)? {
+            docids |=
+                RoaringBitmapCodec::bytes_decode(prefix_docids).ok_or(heed::Error::Decoding)?;
         }
     }
 
     Ok(docids)
 }
 
-pub fn resolve_query_graph(
+pub fn compute_query_graph_docids(
     ctx: &mut SearchContext,
     q: &QueryGraph,
     universe: &RoaringBitmap,
@@ -194,15 +112,11 @@ pub fn resolve_query_graph(
     panic!()
 }
 
-pub fn resolve_phrase<'ctx>(
-    index: &Index,
-    txn: &'ctx RoTxn,
-    db_cache: &mut DatabaseCache<'ctx>,
-    word_interner: &DedupInterner<String>,
-    phrase_interner: &DedupInterner<Phrase>,
+pub fn compute_phrase_docids(
+    ctx: &mut SearchContext,
     phrase: Interned<Phrase>,
 ) -> Result<RoaringBitmap> {
-    let Phrase { words } = phrase_interner.get(phrase).clone();
+    let Phrase { words } = ctx.phrase_interner.get(phrase).clone();
     let mut candidates = RoaringBitmap::new();
     let mut first_iter = true;
     let winsize = words.len().min(3);
@@ -226,14 +140,7 @@ pub fn resolve_phrase<'ctx>(
                 .filter_map(|(index, word)| word.as_ref().map(|word| (index, word)))
             {
                 if dist == 0 {
-                    match db_cache.get_word_pair_proximity_docids(
-                        index,
-                        txn,
-                        word_interner,
-                        s1,
-                        s2,
-                        1,
-                    )? {
+                    match ctx.get_db_word_pair_proximity_docids(s1, s2, 1)? {
                         Some(m) => bitmaps.push(CboRoaringBitmapCodec::deserialize_from(m)?),
                         // If there are no documents for this pair, there will be no
                         // results for the phrase query.
@@ -242,14 +149,9 @@ pub fn resolve_phrase<'ctx>(
                 } else {
                     let mut bitmap = RoaringBitmap::new();
                     for dist in 0..=dist {
-                        if let Some(m) = db_cache.get_word_pair_proximity_docids(
-                            index,
-                            txn,
-                            word_interner,
-                            s1,
-                            s2,
-                            dist as u8 + 1,
-                        )? {
+                        if let Some(m) =
+                            ctx.get_db_word_pair_proximity_docids(s1, s2, dist as u8 + 1)?
+                        {
                             bitmap |= CboRoaringBitmapCodec::deserialize_from(m)?;
                         }
                     }

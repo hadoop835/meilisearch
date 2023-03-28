@@ -44,7 +44,7 @@ use super::interner::MappedInterner;
 use super::logger::SearchLogger;
 use super::query_graph::QueryNode;
 use super::ranking_rule_graph::{
-    ConditionDocIdsCache, DeadEndsCache, /*ProximityGraph,*/ RankingRuleGraph,
+    ConditionDocIdsCache, DeadEndsCache, ProximityGraph, RankingRuleGraph,
     RankingRuleGraphTrait, TypoGraph,
 };
 use super::small_bitmap::SmallBitmap;
@@ -53,12 +53,12 @@ use crate::search::new::query_graph::QueryNodeData;
 use crate::search::new::query_term::DerivationsSubset;
 use crate::Result;
 
-// pub type Proximity = GraphBasedRankingRule<ProximityGraph>;
-// impl Default for GraphBasedRankingRule<ProximityGraph> {
-//     fn default() -> Self {
-//         Self::new("proximity".to_owned())
-//     }
-// }
+pub type Proximity = GraphBasedRankingRule<ProximityGraph>;
+impl Default for GraphBasedRankingRule<ProximityGraph> {
+    fn default() -> Self {
+        Self::new("proximity".to_owned())
+    }
+}
 pub type Typo = GraphBasedRankingRule<TypoGraph>;
 impl Default for GraphBasedRankingRule<TypoGraph> {
     fn default() -> Self {

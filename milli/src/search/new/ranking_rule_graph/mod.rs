@@ -19,7 +19,7 @@ use std::hash::Hash;
 
 pub use condition_docids_cache::ConditionDocIdsCache;
 pub use dead_ends_cache::DeadEndsCache;
-// pub use proximity::{ProximityCondition, ProximityGraph};
+pub use proximity::{ProximityCondition, ProximityGraph};
 use roaring::RoaringBitmap;
 pub use typo::{TypoCondition, TypoGraph};
 

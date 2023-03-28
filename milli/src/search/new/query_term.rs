@@ -52,7 +52,11 @@ impl<T> Lazy<T> {
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum DerivationsSubset {
     All,
-    Subset { words: BTreeSet<Interned<String>>, phrases: BTreeSet<Interned<Phrase>> },
+    Subset {
+        words: BTreeSet<Interned<String>>,
+        phrases: BTreeSet<Interned<Phrase>>,
+        // TODO: prefixes: BTreeSet<Interned<String>>,
+    },
     Nothing,
 }
 
@@ -88,11 +92,11 @@ impl DerivationsSubset {
             Self::Subset { words, phrases } => match other {
                 Self::All => {}
                 Self::Subset { words: w2, phrases: p2 } => {
-                    let mut ws = BTreeSet::default();
+                    let mut ws = BTreeSet::new();
                     for w in words.intersection(w2) {
                         ws.insert(*w);
                     }
-                    let mut ps = BTreeSet::default();
+                    let mut ps = BTreeSet::new();
                     for p in phrases.intersection(p2) {
                         ps.insert(*p);
                     }
@@ -120,65 +124,111 @@ pub struct LocatedQueryTermSubset {
     pub positions: RangeInclusive<i8>,
 }
 
-// // QueryTerm2 will be in a regular Interner and
-// // therefore can be mutated.
+impl QueryTermSubset {
+    pub fn use_prefix_db(&self, ctx: &SearchContext) -> Option<Interned<String>> {
+        let original = ctx.term_interner.get(self.original);
+        let Some(use_prefix_db) = original.zero_typo.use_prefix_db else {
+            return None
+        };
+        match &self.zero_typo_subset {
+            DerivationsSubset::All => Some(use_prefix_db),
+            DerivationsSubset::Subset { words, phrases: _ } => {
+                // TODO: use a subset of prefix words instead
+                if words.contains(&use_prefix_db) {
+                    Some(use_prefix_db)
+                } else {
+                    None
+                }
+            }
+            DerivationsSubset::Nothing => None,
+        }
+    }
+    pub fn all_single_words_except_prefix_db(
+        &self,
+        ctx: &mut SearchContext,
+    ) -> Result<BTreeSet<Interned<String>>> {
+        let original = ctx.term_interner.get_mut(self.original);
+        let mut result = BTreeSet::default();
+        // TODO: a compute_partially funtion
+        if !self.one_typo_subset.is_empty() || !self.two_typo_subset.is_empty() {
+            original.compute_fully_if_needed(
+                ctx.index,
+                ctx.txn,
+                &mut ctx.word_interner,
+                &mut ctx.phrase_interner,
+            )?;
+        }
 
-// impl FullyComputedQueryTerm {
-//     /// Return an iterator over all the single words derived from the original word.
-//     ///
-//     /// This excludes synonyms, split words, and words stored in the prefix databases.
-//     pub fn all_single_words_except_prefix_db<'a>(
-//         &'a self,
-//         zero_typo_subterm_interner: &'a DedupInterner<ZeroTypoSubTerm>,
-//         one_typo_subterm_interner: &'a DedupInterner<OneTypoSubTerm>,
-//         two_typo_subterm_interner: &'a DedupInterner<TwoTypoSubTerm>,
-//     ) -> impl Iterator<Item = Interned<String>> + Clone + 'a {
-//         let Self {
-//             original: _,
-//             is_multiple_words: _,
-//             max_nbr_typos: _,
-//             is_prefix: _,
-//             zero_typo,
-//             one_typo,
-//             two_typo,
-//         } = self;
-//         let ZeroTypoSubTerm { phrase: _, zero_typo, prefix_of, synonyms: _, use_prefix_db: _ } =
-//             zero_typo_subterm_interner.get(*zero_typo);
-//         let OneTypoSubTerm { split_words: _, one_typo } = one_typo_subterm_interner.get(*one_typo);
-//         let one_typo_iter = one_typo.iter().chain(prefix_of.iter());
+        if !self.zero_typo_subset.is_empty() {
+            let ZeroTypoSubTerm { phrase: _, zero_typo, prefix_of, synonyms: _, use_prefix_db: _ } =
+                &original.zero_typo;
+            result.extend(zero_typo.iter().copied());
+            result.extend(prefix_of.iter().copied());
+        };
 
-//         let TwoTypoSubTerm { two_typos } = two_typo_subterm_interner.get(*two_typo);
-//         zero_typo
-//             .iter()
-//             .chain(prefix_of.iter())
-//             .chain(one_typo_iter)
-//             .chain(two_typos.iter())
-//             .copied()
-//     }
-//     /// Return an iterator over all the single words derived from the original word.
-//     ///
-//     /// This excludes synonyms, split words, and words stored in the prefix databases.
-//     pub fn all_phrases<'a>(
-//         &'a self,
-//         zero_typo_subterm_interner: &'a DedupInterner<ZeroTypoSubTerm>,
-//         one_typo_subterm_interner: &'a DedupInterner<OneTypoSubTerm>,
-//     ) -> impl Iterator<Item = Interned<Phrase>> + Clone + 'a {
-//         let Self {
-//             original: _,
-//             is_multiple_words: _,
-//             max_nbr_typos: _,
-//             is_prefix: _,
-//             zero_typo,
-//             one_typo,
-//             two_typo: _,
-//         } = self;
-//         let ZeroTypoSubTerm { phrase, zero_typo: _, prefix_of: _, synonyms, use_prefix_db: _ } =
-//             zero_typo_subterm_interner.get(*zero_typo);
+        match &self.one_typo_subset {
+            DerivationsSubset::All => {
+                let Lazy::Init(OneTypoSubTerm { split_words: _, one_typo }) = &original.one_typo else {
+                    panic!()
+                };
+                result.extend(one_typo.iter().copied())
+            }
+            DerivationsSubset::Subset { words, phrases: _ } => {
+                let Lazy::Init(OneTypoSubTerm { split_words: _, one_typo }) = &original.one_typo else {
+                    panic!()
+                };
+                result.extend(one_typo.intersection(words));
+            }
+            DerivationsSubset::Nothing => {}
+        };
 
-//         let OneTypoSubTerm { split_words, one_typo: _ } = one_typo_subterm_interner.get(*one_typo);
-//         split_words.iter().chain(synonyms.iter()).chain(phrase.iter()).copied()
-//     }
-// }
+        match &self.two_typo_subset {
+            DerivationsSubset::All => {
+                let Lazy::Init(TwoTypoSubTerm { two_typos }) = &original.two_typo else {
+                    panic!()
+                };
+                result.extend(two_typos.iter().copied());
+            }
+            DerivationsSubset::Subset { words, phrases: _ } => {
+                let Lazy::Init(TwoTypoSubTerm { two_typos }) = &original.two_typo else {
+                    panic!()
+                };
+                result.extend(two_typos.intersection(words));
+            }
+            DerivationsSubset::Nothing => {}
+        };
+
+        Ok(result)
+    }
+    pub fn all_phrases(&self, ctx: &mut SearchContext) -> Result<BTreeSet<Interned<Phrase>>> {
+        let original = ctx.term_interner.get_mut(self.original);
+        let mut result = BTreeSet::default();
+
+        if !self.one_typo_subset.is_empty() {
+            // TODO: compute less than fully if possible
+            original.compute_fully_if_needed(
+                ctx.index,
+                ctx.txn,
+                &mut ctx.word_interner,
+                &mut ctx.phrase_interner,
+            )?;
+        }
+
+        let ZeroTypoSubTerm { phrase, zero_typo: _, prefix_of: _, synonyms, use_prefix_db: _ } =
+            &original.zero_typo;
+        result.extend(phrase.iter().copied());
+        result.extend(synonyms.iter().copied());
+
+        if !self.one_typo_subset.is_empty() {
+            let Lazy::Init(OneTypoSubTerm { split_words, one_typo: _ }) = &original.one_typo else {
+                panic!();
+            };
+            result.extend(split_words.iter().copied());
+        }
+
+        Ok(result)
+    }
+}
 
 impl QueryTerm {
     pub fn compute_fully_if_needed(
@@ -226,9 +276,9 @@ pub struct ZeroTypoSubTerm {
     /// A single word equivalent to the original term, with zero typos
     pub zero_typo: Option<Interned<String>>,
     /// All the words that contain the original word as prefix
-    pub prefix_of: Box<[Interned<String>]>,
+    pub prefix_of: BTreeSet<Interned<String>>,
     /// All the synonyms of the original word or phrase
-    pub synonyms: Box<[Interned<Phrase>]>,
+    pub synonyms: BTreeSet<Interned<Phrase>>,
     /// A prefix in the prefix databases matching the original word
     pub use_prefix_db: Option<Interned<String>>,
 }
@@ -237,12 +287,12 @@ pub struct OneTypoSubTerm {
     /// The original word split into multiple consecutive words
     pub split_words: Option<Interned<Phrase>>,
     /// Words that are 1 typo away from the original word
-    pub one_typo: Box<[Interned<String>]>,
+    pub one_typo: BTreeSet<Interned<String>>,
 }
 #[derive(Default, Clone, PartialEq, Eq, Hash)]
 pub struct TwoTypoSubTerm {
     /// Words that are 2 typos away from the original word
-    pub two_typos: Box<[Interned<String>]>,
+    pub two_typos: BTreeSet<Interned<String>>,
 }
 
 impl ZeroTypoSubTerm {
@@ -282,8 +332,8 @@ impl QueryTerm {
             zero_typo: ZeroTypoSubTerm {
                 phrase: Some(phrase_interner.insert(phrase)),
                 zero_typo: None,
-                prefix_of: Box::new([]),
-                synonyms: Box::new([]),
+                prefix_of: BTreeSet::default(),
+                synonyms: BTreeSet::default(),
                 use_prefix_db: None,
             },
             one_typo: Lazy::Uninit,
@@ -453,7 +503,7 @@ fn partially_initialized_term_from_word(
     let use_prefix_db = if use_prefix_db { Some(word_interned) } else { None };
 
     let mut zero_typo = None;
-    let mut prefix_of = vec![];
+    let mut prefix_of = BTreeSet::new();
 
     if fst.contains(word) {
         zero_typo = Some(word_interned);
@@ -465,7 +515,7 @@ fn partially_initialized_term_from_word(
             fst,
             &mut ctx.word_interner,
             |derived_word| {
-                prefix_of.push(derived_word);
+                prefix_of.insert(derived_word);
                 Ok(())
             },
         )?;
@@ -482,13 +532,7 @@ fn partially_initialized_term_from_word(
             ctx.phrase_interner.insert(Phrase { words })
         })
         .collect();
-    let zero_typo = ZeroTypoSubTerm {
-        phrase: None,
-        zero_typo,
-        prefix_of: prefix_of.into_boxed_slice(),
-        synonyms,
-        use_prefix_db,
-    };
+    let zero_typo = ZeroTypoSubTerm { phrase: None, zero_typo, prefix_of, synonyms, use_prefix_db };
 
     Ok(QueryTerm {
         original: word_interned,
@@ -529,7 +573,7 @@ impl QueryTerm {
         if one_typo.is_init() {
             return Ok(());
         }
-        let mut one_typo_words = vec![];
+        let mut one_typo_words = BTreeSet::new();
 
         find_zero_one_typo_derivations(
             *original,
@@ -540,7 +584,7 @@ impl QueryTerm {
                 match nbr_typos {
                     ZeroOrOneTypo::Zero => {}
                     ZeroOrOneTypo::One => {
-                        one_typo_words.push(derived_word);
+                        one_typo_words.insert(derived_word);
                     }
                 }
                 Ok(())
@@ -548,7 +592,7 @@ impl QueryTerm {
         )?;
         let split_words =
             find_split_words(index, txn, word_interner, phrase_interner, original_str.as_str())?;
-        let one_typo = OneTypoSubTerm { split_words, one_typo: one_typo_words.into_boxed_slice() };
+        let one_typo = OneTypoSubTerm { split_words, one_typo: one_typo_words };
 
         self.one_typo = Lazy::Init(one_typo);
 
@@ -566,8 +610,8 @@ impl QueryTerm {
         if two_typo.is_init() {
             return Ok(());
         }
-        let mut one_typo_words = vec![];
-        let mut two_typo_words = vec![];
+        let mut one_typo_words = BTreeSet::new();
+        let mut two_typo_words = BTreeSet::new();
 
         find_zero_one_two_typo_derivations(
             *original,
@@ -578,10 +622,10 @@ impl QueryTerm {
                 match nbr_typos {
                     NumberOfTypos::Zero => {}
                     NumberOfTypos::One => {
-                        one_typo_words.push(derived_word);
+                        one_typo_words.insert(derived_word);
                     }
                     NumberOfTypos::Two => {
-                        two_typo_words.push(derived_word);
+                        two_typo_words.insert(derived_word);
                     }
                 }
                 Ok(())
@@ -589,9 +633,9 @@ impl QueryTerm {
         )?;
         let split_words =
             find_split_words(index, txn, word_interner, phrase_interner, original_str.as_str())?;
-        let one_typo = OneTypoSubTerm { one_typo: one_typo_words.into_boxed_slice(), split_words };
+        let one_typo = OneTypoSubTerm { one_typo: one_typo_words, split_words };
 
-        let two_typo = TwoTypoSubTerm { two_typos: two_typo_words.into_boxed_slice() };
+        let two_typo = TwoTypoSubTerm { two_typos: two_typo_words };
 
         self.one_typo = Lazy::Init(one_typo);
         self.two_typo = Lazy::Init(two_typo);
@@ -839,14 +883,12 @@ pub fn make_ngram(
     // Now add the synonyms
     let index_synonyms = ctx.index.synonyms(ctx.txn)?;
 
-    let mut term_synonyms = term.zero_typo.synonyms.to_vec();
-    term_synonyms.extend(index_synonyms.get(&words).cloned().unwrap_or_default().into_iter().map(
-        |words| {
+    term.zero_typo.synonyms.extend(
+        index_synonyms.get(&words).cloned().unwrap_or_default().into_iter().map(|words| {
             let words = words.into_iter().map(|w| Some(ctx.word_interner.insert(w))).collect();
             ctx.phrase_interner.insert(Phrase { words })
-        },
-    ));
-    term.zero_typo.synonyms = term_synonyms.into_boxed_slice();
+        }),
+    );
 
     let term = QueryTerm {
         original,

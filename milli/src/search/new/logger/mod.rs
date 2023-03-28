@@ -6,7 +6,7 @@ use roaring::RoaringBitmap;
 use super::interner::{Interned, MappedInterner};
 use super::query_graph::QueryNode;
 use super::ranking_rule_graph::{
-    DeadEndsCache, /*ProximityCondition, ProximityGraph,*/ RankingRuleGraph, TypoCondition, TypoGraph,
+    DeadEndsCache, ProximityCondition, ProximityGraph, RankingRuleGraph, TypoCondition, TypoGraph,
 };
 use super::{RankingRule, RankingRuleQueryTrait};
 
@@ -60,16 +60,16 @@ pub trait SearchLogger<Q: RankingRuleQueryTrait> {
     /// Logs the internal state of the words ranking rule
     fn log_words_state(&mut self, query_graph: &Q);
 
-    // /// Logs the internal state of the proximity ranking rule
-    // fn log_proximity_state(
-    //     &mut self,
-    //     query_graph: &RankingRuleGraph<ProximityGraph>,
-    //     paths: &[Vec<Interned<ProximityCondition>>],
-    //     dead_ends_cache: &DeadEndsCache<ProximityCondition>,
-    //     universe: &RoaringBitmap,
-    //     distances: &MappedInterner<QueryNode, Vec<u64>>,
-    //     cost: u64,
-    // );
+    /// Logs the internal state of the proximity ranking rule
+    fn log_proximity_state(
+        &mut self,
+        query_graph: &RankingRuleGraph<ProximityGraph>,
+        paths: &[Vec<Interned<ProximityCondition>>],
+        dead_ends_cache: &DeadEndsCache<ProximityCondition>,
+        universe: &RoaringBitmap,
+        distances: &MappedInterner<QueryNode, Vec<u64>>,
+        cost: u64,
+    );
 
     /// Logs the internal state of the typo ranking rule
     fn log_typo_state(
@@ -132,16 +132,16 @@ impl<Q: RankingRuleQueryTrait> SearchLogger<Q> for DefaultSearchLogger {
 
     fn log_words_state(&mut self, _query_graph: &Q) {}
 
-    // fn log_proximity_state(
-    //     &mut self,
-    //     _query_graph: &RankingRuleGraph<ProximityGraph>,
-    //     _paths_map: &[Vec<Interned<ProximityCondition>>],
-    //     _dead_ends_cache: &DeadEndsCache<ProximityCondition>,
-    //     _universe: &RoaringBitmap,
-    //     _costs: &MappedInterner<QueryNode, Vec<u64>>,
-    //     _cost: u64,
-    // ) {
-    // }
+    fn log_proximity_state(
+        &mut self,
+        _query_graph: &RankingRuleGraph<ProximityGraph>,
+        _paths_map: &[Vec<Interned<ProximityCondition>>],
+        _dead_ends_cache: &DeadEndsCache<ProximityCondition>,
+        _universe: &RoaringBitmap,
+        _costs: &MappedInterner<QueryNode, Vec<u64>>,
+        _cost: u64,
+    ) {
+    }
 
     fn log_typo_state(
         &mut self,

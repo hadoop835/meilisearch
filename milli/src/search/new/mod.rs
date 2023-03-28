@@ -15,27 +15,25 @@ mod sort;
 // TODO: documentation + comments
 mod words;
 
-use std::collections::{BTreeSet, HashSet};
-
-use charabia::TokenizerBuilder;
-use db_cache::DatabaseCache;
-use graph_based_ranking_rule::Typo;
-use heed::RoTxn;
-use interner::DedupInterner;
 pub use logger::detailed::DetailedSearchLogger;
 pub use logger::{DefaultSearchLogger, SearchLogger};
 pub use query_graph::QueryGraph;
-use query_graph::{QueryNode, QueryNodeData};
-use query_term::{located_query_terms_from_string, Phrase, QueryTerm};
-use ranking_rules::{bucket_sort, PlaceholderQuery, RankingRuleOutput, RankingRuleQueryTrait};
-use resolve_query_graph::{resolve_query_graph, QueryTermDocIdsCache};
-use roaring::RoaringBitmap;
-use words::Words;
 
-use self::interner::Interner;
-use self::query_term::LocatedQueryTermSubset;
-use self::ranking_rules::RankingRule;
 use crate::{Filter, Index, MatchingWords, Result, Search, SearchResult, TermsMatchingStrategy};
+use charabia::TokenizerBuilder;
+use db_cache::DatabaseCache;
+use graph_based_ranking_rule::{Proximity, Typo};
+use heed::RoTxn;
+use interner::{DedupInterner, Interner};
+use query_graph::{QueryNode, QueryNodeData};
+use query_term::{located_query_terms_from_string, LocatedQueryTermSubset, Phrase, QueryTerm};
+use ranking_rules::{
+    bucket_sort, PlaceholderQuery, RankingRule, RankingRuleOutput, RankingRuleQueryTrait,
+};
+use resolve_query_graph::{compute_query_graph_docids, PhraseDocIdsCache};
+use roaring::RoaringBitmap;
+use std::collections::{BTreeSet, HashSet};
+use words::Words;
 
 /// A structure used throughout the execution of a search query.
 pub struct SearchContext<'ctx> {
@@ -45,7 +43,7 @@ pub struct SearchContext<'ctx> {
     pub word_interner: DedupInterner<String>,
     pub phrase_interner: DedupInterner<Phrase>,
     pub term_interner: Interner<QueryTerm>,
-    pub term_docids: QueryTermDocIdsCache,
+    pub term_docids: PhraseDocIdsCache,
 }
 impl<'ctx> SearchContext<'ctx> {
     pub fn new(index: &'ctx Index, txn: &'ctx RoTxn<'ctx>) -> Self {
@@ -100,7 +98,7 @@ fn resolve_maximally_reduced_query_graph(
         }
     }
     logger.query_for_universe(&graph);
-    let docids = resolve_query_graph(ctx, &graph, universe)?;
+    let docids = compute_query_graph_docids(ctx, &graph, universe)?;
 
     Ok(docids)
 }
@@ -182,7 +180,7 @@ fn get_ranking_rules_for_query_graph_search<'ctx>(
                     continue;
                 }
                 proximity = true;
-                // ranking_rules.push(Box::<Proximity>::default());
+                ranking_rules.push(Box::<Proximity>::default());
             }
             crate::Criterion::Attribute => {
                 if attribute {
