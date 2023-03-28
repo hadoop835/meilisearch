@@ -32,12 +32,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             );
             s.terms_matching_strategy(TermsMatchingStrategy::Last);
 
-            let logger = DetailedSearchLogger::new("log");
-            let _docs = s
-                .execute_with_logger(logger, |logger, ctx| {
-                    logger.write_d2_description(ctx);
-                })
-                .unwrap();
+            // let logger = DetailedSearchLogger::new("log");
+            let _docs = s.execute();
+            // .execute_with_logger(logger, |logger, ctx| {
+            //     logger.write_d2_description(ctx);
+            // })
+            // .unwrap();
 
             let elapsed = start.elapsed();
             println!("{}us", elapsed.as_micros());

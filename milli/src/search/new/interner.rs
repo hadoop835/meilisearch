@@ -161,6 +161,9 @@ impl<T> Interner<T> {
             _phantom: PhantomData,
         }
     }
+    pub fn map_indexes<U>(&self, map_f: impl Fn(Interned<T>) -> U) -> MappedInterner<T, U> {
+        MappedInterner { stable_store: self.indexes().map(map_f).collect(), _phantom: PhantomData }
+    }
     pub fn indexes(&self) -> impl Iterator<Item = Interned<T>> {
         (0..self.stable_store.len()).map(|i| Interned::from_raw(i as u16))
     }

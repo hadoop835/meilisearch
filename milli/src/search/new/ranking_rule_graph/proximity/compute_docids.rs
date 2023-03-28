@@ -2,8 +2,8 @@
 
 use super::ProximityCondition;
 use crate::search::new::interner::Interned;
-use crate::search::new::query_term::{DerivationsSubset, Phrase, QueryTermSubset};
-use crate::search::new::ranking_rule_graph::condition_docids_cache::ComputedCondition;
+use crate::search::new::query_term::{Phrase, QueryTermSubset};
+use crate::search::new::ranking_rule_graph::ComputedCondition;
 use crate::search::new::resolve_query_graph::compute_query_term_subset_docids;
 use crate::search::new::SearchContext;
 use crate::{CboRoaringBitmapCodec, Result};
@@ -22,18 +22,10 @@ pub fn compute_docids(
         ProximityCondition::Term { term } => {
             let mut docids = compute_query_term_subset_docids(ctx, term)?;
             docids &= universe;
-            let left_subset = DerivationsSubset::Nothing;
-            let right_subset = {
-                let mut r = term.zero_typo_subset.clone();
-                r.union(&term.one_typo_subset);
-                r.union(&term.two_typo_subset);
-                r
-            };
             return Ok(ComputedCondition {
                 docids,
                 universe_len: universe.len(),
-                from_subset: left_subset,
-                to_subset: right_subset,
+                subsets: vec![term.clone()],
             });
         }
     };
@@ -50,9 +42,6 @@ pub fn compute_docids(
     let forward_proximity = 1 + cost - right_term_ngram_len;
     let backward_proximity = cost - right_term_ngram_len;
 
-    let mut used_left_derivations = DerivationsSubset::Nothing;
-    let mut used_right_derivations = DerivationsSubset::Nothing;
-
     let mut docids = RoaringBitmap::new();
 
     if let Some(right_prefix) = right_term.use_prefix_db(ctx) {
@@ -66,8 +55,6 @@ pub fn compute_docids(
                 backward_proximity,
                 &mut docids,
                 universe,
-                &mut used_left_derivations,
-                &mut used_right_derivations,
             )?;
         }
     }
@@ -91,17 +78,18 @@ pub fn compute_docids(
                 backward_proximity,
                 &mut docids,
                 universe,
-                &mut used_left_derivations,
-                &mut used_right_derivations,
             )?;
         }
     }
 
+    // TODO: think about it
+    let used_left_subset = QueryTermSubset::full(left_term.original);
+    let used_right_subset = QueryTermSubset::full(right_term.original);
+
     Ok(ComputedCondition {
         docids,
         universe_len: universe.len(),
-        from_subset: used_left_derivations,
-        to_subset: used_right_derivations,
+        subsets: vec![used_left_subset, used_right_subset],
     })
 }
 
@@ -114,8 +102,6 @@ fn compute_prefix_edges(
     backward_proximity: u8,
     docids: &mut RoaringBitmap,
     universe: &RoaringBitmap,
-    used_left_derivations: &mut DerivationsSubset,
-    used_right_derivations: &mut DerivationsSubset,
 ) -> Result<()> {
     let mut used_left_words = BTreeSet::new();
     let mut used_left_phrases = BTreeSet::new();
@@ -160,11 +146,6 @@ fn compute_prefix_edges(
         }
     }
 
-    used_left_derivations
-        .union(&DerivationsSubset::Subset { words: used_left_words, phrases: used_left_phrases });
-    used_right_derivations
-        .union(&DerivationsSubset::Subset { words: used_right_prefix, phrases: BTreeSet::new() });
-
     Ok(())
 }
 
@@ -178,8 +159,6 @@ fn compute_non_prefix_edges(
     backward_proximity: u8,
     docids: &mut RoaringBitmap,
     universe: &RoaringBitmap,
-    used_left_derivations: &mut DerivationsSubset,
-    used_right_derivations: &mut DerivationsSubset,
 ) -> Result<()> {
     let mut used_left_phrases = BTreeSet::new();
     let mut used_right_phrases = BTreeSet::new();
@@ -227,11 +206,6 @@ fn compute_non_prefix_edges(
             }
         }
     }
-
-    used_left_derivations
-        .union(&DerivationsSubset::Subset { words: used_left_words, phrases: used_left_phrases });
-    used_right_derivations
-        .union(&DerivationsSubset::Subset { words: used_right_words, phrases: used_right_phrases });
 
     Ok(())
 }

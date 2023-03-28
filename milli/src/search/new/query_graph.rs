@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use super::interner::{FixedSizeInterner, Interned};
 use super::query_term::{
-    self, number_of_typos_allowed, DerivationsSubset, LocatedQueryTerm, LocatedQueryTermSubset,
+    self, number_of_typos_allowed, LocatedQueryTerm, LocatedQueryTermSubset, NTypoTermSubset,
     QueryTermSubset,
 };
 use super::small_bitmap::SmallBitmap;
@@ -127,9 +127,9 @@ impl QueryGraph {
                 QueryNodeData::Term(LocatedQueryTermSubset {
                     term_subset: QueryTermSubset {
                         original: Interned::from_raw(term_idx as u16),
-                        zero_typo_subset: DerivationsSubset::All,
-                        one_typo_subset: DerivationsSubset::All,
-                        two_typo_subset: DerivationsSubset::All,
+                        zero_typo_subset: NTypoTermSubset::All,
+                        one_typo_subset: NTypoTermSubset::All,
+                        two_typo_subset: NTypoTermSubset::All,
                     },
                     positions: terms[term_idx].positions.clone(),
                 }),
@@ -148,9 +148,9 @@ impl QueryGraph {
                         QueryNodeData::Term(LocatedQueryTermSubset {
                             term_subset: QueryTermSubset {
                                 original: ngram.value,
-                                zero_typo_subset: DerivationsSubset::All,
-                                one_typo_subset: DerivationsSubset::All,
-                                two_typo_subset: DerivationsSubset::All,
+                                zero_typo_subset: NTypoTermSubset::All,
+                                one_typo_subset: NTypoTermSubset::All,
+                                two_typo_subset: NTypoTermSubset::All,
                             },
                             positions: ngram.positions,
                         }),
@@ -170,9 +170,9 @@ impl QueryGraph {
                         QueryNodeData::Term(LocatedQueryTermSubset {
                             term_subset: QueryTermSubset {
                                 original: ngram.value,
-                                zero_typo_subset: DerivationsSubset::All,
-                                one_typo_subset: DerivationsSubset::All,
-                                two_typo_subset: DerivationsSubset::All,
+                                zero_typo_subset: NTypoTermSubset::All,
+                                one_typo_subset: NTypoTermSubset::All,
+                                two_typo_subset: NTypoTermSubset::All,
                             },
                             positions: ngram.positions,
                         }),

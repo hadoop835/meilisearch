@@ -23,14 +23,18 @@ pub use proximity::{ProximityCondition, ProximityGraph};
 use roaring::RoaringBitmap;
 pub use typo::{TypoCondition, TypoGraph};
 
-use self::condition_docids_cache::ComputedCondition;
-
 use super::interner::{DedupInterner, FixedSizeInterner, Interned, MappedInterner};
 use super::logger::SearchLogger;
+use super::query_term::QueryTermSubset;
 use super::small_bitmap::SmallBitmap;
 use super::{QueryGraph, QueryNode, SearchContext};
 use crate::Result;
 
+pub struct ComputedCondition {
+    pub docids: RoaringBitmap,
+    pub universe_len: u64,
+    pub subsets: Vec<QueryTermSubset>,
+}
 /// An edge in the ranking rule graph.
 ///
 /// It contains:
@@ -113,8 +117,7 @@ pub struct RankingRuleGraph<G: RankingRuleGraphTrait> {
     pub edges_store: FixedSizeInterner<Option<Edge<G::Condition>>>,
     pub edges_of_node: MappedInterner<QueryNode, SmallBitmap<Option<Edge<G::Condition>>>>,
     pub conditions_interner: FixedSizeInterner<G::Condition>,
-    pub from_nodes_of_condition: MappedInterner<G::Condition, SmallBitmap<QueryNode>>,
-    pub to_nodes_of_condition: MappedInterner<G::Condition, SmallBitmap<QueryNode>>,
+    pub nodes_of_condition: MappedInterner<G::Condition, SmallBitmap<QueryNode>>,
 }
 impl<G: RankingRuleGraphTrait> Clone for RankingRuleGraph<G> {
     fn clone(&self) -> Self {
@@ -123,8 +126,7 @@ impl<G: RankingRuleGraphTrait> Clone for RankingRuleGraph<G> {
             edges_store: self.edges_store.clone(),
             edges_of_node: self.edges_of_node.clone(),
             conditions_interner: self.conditions_interner.clone(),
-            from_nodes_of_condition: self.from_nodes_of_condition.clone(),
-            to_nodes_of_condition: self.to_nodes_of_condition.clone(),
+            nodes_of_condition: self.nodes_of_condition.clone(),
         }
     }
 }

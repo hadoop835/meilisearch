@@ -3,8 +3,7 @@ pub mod compute_docids;
 
 use roaring::RoaringBitmap;
 
-use super::condition_docids_cache::ComputedCondition;
-use super::{DeadEndsCache, RankingRuleGraph, RankingRuleGraphTrait};
+use super::{DeadEndsCache, RankingRuleGraph, RankingRuleGraphTrait, ComputedCondition};
 use crate::search::new::interner::{DedupInterner, Interned, MappedInterner};
 use crate::search::new::logger::SearchLogger;
 use crate::search::new::query_term::QueryTermSubset;

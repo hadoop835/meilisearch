@@ -1,12 +1,11 @@
 use roaring::RoaringBitmap;
 
-use super::condition_docids_cache::ComputedCondition;
-use super::{DeadEndsCache, RankingRuleGraph, RankingRuleGraphTrait};
+use super::{ComputedCondition, DeadEndsCache, RankingRuleGraph, RankingRuleGraphTrait};
 use crate::search::new::interner::{DedupInterner, Interned, MappedInterner};
 use crate::search::new::logger::SearchLogger;
 use crate::search::new::query_graph::QueryNodeData;
 use crate::search::new::query_term::{
-    DerivationsSubset, LocatedQueryTermSubset, NumberOfTypos, QueryTerm, QueryTermSubset,
+    LocatedQueryTermSubset, NTypoTermSubset, NumberOfTypos, QueryTerm, QueryTermSubset,
 };
 use crate::search::new::resolve_query_graph::compute_query_term_subset_docids;
 use crate::search::new::{QueryGraph, QueryNode, SearchContext};
@@ -16,7 +15,7 @@ use crate::Result;
 pub struct TypoCondition {
     original_term: Interned<QueryTerm>,
     nbr_typos: NumberOfTypos,
-    subset: DerivationsSubset,
+    subset: NTypoTermSubset,
 }
 
 pub enum TypoGraph {}
@@ -31,28 +30,25 @@ impl RankingRuleGraphTrait for TypoGraph {
     ) -> Result<ComputedCondition> {
         let TypoCondition { original_term, nbr_typos, subset } = condition;
 
-        let mut term_subset = QueryTermSubset {
+        let mut term_to_compute = QueryTermSubset {
             original: *original_term,
-            zero_typo_subset: DerivationsSubset::Nothing,
-            one_typo_subset: DerivationsSubset::Nothing,
-            two_typo_subset: DerivationsSubset::Nothing,
+            zero_typo_subset: NTypoTermSubset::Nothing,
+            one_typo_subset: NTypoTermSubset::Nothing,
+            two_typo_subset: NTypoTermSubset::Nothing,
         };
         match nbr_typos {
-            NumberOfTypos::Zero => term_subset.zero_typo_subset = subset.clone(),
-            NumberOfTypos::One => term_subset.one_typo_subset = subset.clone(),
-            NumberOfTypos::Two => term_subset.two_typo_subset = subset.clone(),
+            NumberOfTypos::Zero => term_to_compute.zero_typo_subset = subset.clone(),
+            NumberOfTypos::One => term_to_compute.one_typo_subset = subset.clone(),
+            NumberOfTypos::Two => term_to_compute.two_typo_subset = subset.clone(),
         }
 
         // maybe compute_query_term_subset_docids should accept a universe as argument
-        let mut docids = compute_query_term_subset_docids(ctx, &term_subset)?;
+        let mut docids = compute_query_term_subset_docids(ctx, &term_to_compute)?;
         docids &= universe;
 
-        Ok(ComputedCondition {
-            docids,
-            universe_len: universe.len(),
-            from_subset: DerivationsSubset::Nothing,
-            to_subset: subset.clone(),
-        })
+        let subsets = if docids.is_empty() { vec![] } else { vec![term_to_compute] };
+
+        Ok(ComputedCondition { docids, universe_len: universe.len(), subsets })
     }
 
     fn build_edges(
@@ -78,7 +74,7 @@ impl RankingRuleGraphTrait for TypoGraph {
                         2 => (&term_subset.two_typo_subset, NumberOfTypos::Two),
                         _ => panic!(),
                     };
-                    if matches!(subset, DerivationsSubset::Nothing) {
+                    if matches!(subset, NTypoTermSubset::Nothing) {
                         continue;
                     }
                     edges.push((

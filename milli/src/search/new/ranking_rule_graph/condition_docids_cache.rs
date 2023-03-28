@@ -3,21 +3,14 @@ use std::marker::PhantomData;
 use fxhash::FxHashMap;
 use roaring::RoaringBitmap;
 
-use super::{RankingRuleGraph, RankingRuleGraphTrait};
+use super::{ComputedCondition, RankingRuleGraph, RankingRuleGraphTrait};
 use crate::search::new::interner::Interned;
-use crate::search::new::query_term::DerivationsSubset;
+use crate::search::new::query_term::QueryTermSubset;
 use crate::search::new::SearchContext;
 use crate::Result;
 
 // TODO: give a generation to each universe, then be able to get the exact
 // delta of docids between two universes of different generations!
-
-pub struct ComputedCondition {
-    pub docids: RoaringBitmap,
-    pub universe_len: u64,
-    pub from_subset: DerivationsSubset,
-    pub to_subset: DerivationsSubset,
-}
 
 /// A cache storing the document ids associated with each ranking rule edge
 pub struct ConditionDocIdsCache<G: RankingRuleGraphTrait> {
@@ -33,9 +26,9 @@ impl<G: RankingRuleGraphTrait> ConditionDocIdsCache<G> {
     pub fn get_subsets_used_by_condition(
         &mut self,
         interned_condition: Interned<G::Condition>,
-    ) -> (&DerivationsSubset, &DerivationsSubset) {
+    ) -> &[QueryTermSubset] {
         let c = &self.cache[&interned_condition];
-        (&c.from_subset, &c.to_subset)
+        &c.subsets
     }
     /// Retrieve the document ids for the given edge condition.
     ///

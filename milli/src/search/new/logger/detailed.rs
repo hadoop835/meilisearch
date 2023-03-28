@@ -9,7 +9,7 @@ use roaring::RoaringBitmap;
 use crate::search::new::interner::{Interned, MappedInterner};
 use crate::search::new::query_graph::QueryNodeData;
 use crate::search::new::query_term::{
-    Lazy, LocatedQueryTermSubset, OneTypoSubTerm, QueryTerm, TwoTypoSubTerm, ZeroTypoSubTerm,
+    Lazy, LocatedQueryTermSubset, OneTypoTerm, QueryTerm, TwoTypoTerm, ZeroTypoTerm,
 };
 use crate::search::new::ranking_rule_graph::{
     DeadEndsCache, Edge, ProximityCondition, ProximityGraph, RankingRuleGraph,
@@ -425,7 +425,7 @@ results.{cur_ranking_rule}{cur_activated_id} {{
         writeln!(&mut file, "}}").unwrap();
     }
 
-    fn query_node_d2_desc<R: RankingRuleGraphTrait>(
+    fn query_node_d2_desc(
         ctx: &mut SearchContext,
         node_idx: Interned<QueryNode>,
         node: &QueryNode,
@@ -453,57 +453,69 @@ results.{cur_ranking_rule}{cur_activated_id} {{
                 )
                 .unwrap();
 
-                let ZeroTypoSubTerm { phrase, zero_typo, prefix_of, synonyms, use_prefix_db } =
+                let ZeroTypoTerm { phrase, zero_typo, prefix_of, synonyms, use_prefix_db } =
                     zero_typo;
 
                 for w in zero_typo.iter().copied() {
-                    let w = ctx.word_interner.get(w);
-                    writeln!(file, "\"{w}\" : 0").unwrap();
+                    if term_subset.zero_typo_subset.contains_word(w) {
+                        let w = ctx.word_interner.get(w);
+                        writeln!(file, "\"{w}\" : 0").unwrap();
+                    }
                 }
                 for w in prefix_of.iter().copied() {
-                    let w = ctx.word_interner.get(w);
-                    writeln!(file, "\"{w}\" : 0P").unwrap();
+                    if term_subset.zero_typo_subset.contains_word(w) {
+                        let w = ctx.word_interner.get(w);
+                        writeln!(file, "\"{w}\" : 0P").unwrap();
+                    }
                 }
 
                 if let Some(phrase) = phrase {
-                    let phrase = ctx.phrase_interner.get(*phrase);
-                    let phrase_str = phrase.description(&ctx.word_interner);
-                    writeln!(file, "\"{phrase_str}\" : phrase").unwrap();
+                    if term_subset.zero_typo_subset.contains_phrase(*phrase) {
+                        let phrase = ctx.phrase_interner.get(*phrase);
+                        let phrase_str = phrase.description(&ctx.word_interner);
+                        writeln!(file, "\"{phrase_str}\" : phrase").unwrap();
+                    }
                 }
 
                 for synonym in synonyms.iter().copied() {
-                    let phrase = ctx.phrase_interner.get(synonym);
-                    let phrase_str = phrase.description(&ctx.word_interner);
-                    writeln!(file, "\"{phrase_str}\" : synonym").unwrap();
+                    if term_subset.zero_typo_subset.contains_phrase(synonym) {
+                        let phrase = ctx.phrase_interner.get(synonym);
+                        let phrase_str = phrase.description(&ctx.word_interner);
+                        writeln!(file, "\"{phrase_str}\" : synonym").unwrap();
+                    }
                 }
                 if let Some(use_prefix_db) = use_prefix_db {
-                    let p = ctx.word_interner.get(*use_prefix_db);
-                    writeln!(file, "use prefix DB : {p}").unwrap();
+                    if term_subset.zero_typo_subset.contains_word(*use_prefix_db) {
+                        let p = ctx.word_interner.get(*use_prefix_db);
+                        writeln!(file, "use prefix DB : {p}").unwrap();
+                    }
                 }
                 if let Lazy::Init(one_typo) = one_typo {
-                    let OneTypoSubTerm { split_words, one_typo } = one_typo;
+                    let OneTypoTerm { split_words, one_typo } = one_typo;
 
                     for w in one_typo.iter().copied() {
-                        let w = ctx.word_interner.get(w);
-                        writeln!(file, "\"{w}\" : 1").unwrap();
+                        if term_subset.one_typo_subset.contains_word(w) {
+                            let w = ctx.word_interner.get(w);
+                            writeln!(file, "\"{w}\" : 1").unwrap();
+                        }
                     }
                     if let Some(split_words) = split_words {
-                        let phrase = ctx.phrase_interner.get(*split_words);
-                        let phrase_str = phrase.description(&ctx.word_interner);
-                        writeln!(file, "\"{phrase_str}\" : split_words").unwrap();
+                        if term_subset.one_typo_subset.contains_phrase(*split_words) {
+                            let phrase = ctx.phrase_interner.get(*split_words);
+                            let phrase_str = phrase.description(&ctx.word_interner);
+                            writeln!(file, "\"{phrase_str}\" : split_words").unwrap();
+                        }
                     }
                 }
                 if let Lazy::Init(two_typo) = two_typo {
-                    let TwoTypoSubTerm { two_typos } = two_typo;
+                    let TwoTypoTerm { two_typos } = two_typo;
                     for w in two_typos.iter().copied() {
-                        let w = ctx.word_interner.get(w);
-                        writeln!(file, "\"{w}\" : 2").unwrap();
+                        if term_subset.two_typo_subset.contains_word(w) {
+                            let w = ctx.word_interner.get(w);
+                            writeln!(file, "\"{w}\" : 2").unwrap();
+                        }
                     }
                 }
-
-                // for d in costs.iter() {
-                //     writeln!(file, "\"d_{d}\" : distance").unwrap();
-                // }
 
                 writeln!(file, "}}").unwrap();
             }
@@ -526,7 +538,7 @@ results.{cur_ranking_rule}{cur_activated_id} {{
             if matches!(node.data, QueryNodeData::Deleted) {
                 continue;
             }
-            Self::query_node_d2_desc::<TypoGraph>(ctx, node_id, node, &[], file);
+            Self::query_node_d2_desc(ctx, node_id, node, &[], file);
 
             for edge in node.successors.iter() {
                 writeln!(file, "{node_id} -> {edge};\n").unwrap();
@@ -549,7 +561,7 @@ results.{cur_ranking_rule}{cur_activated_id} {{
                 continue;
             }
             let costs = &costs.get(node_idx);
-            Self::query_node_d2_desc::<R>(ctx, node_idx, node, costs, file);
+            Self::query_node_d2_desc(ctx, node_idx, node, costs, file);
         }
         for (_edge_id, edge) in graph.edges_store.iter() {
             let Some(edge) = edge else { continue };

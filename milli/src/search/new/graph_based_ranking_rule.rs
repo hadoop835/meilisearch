@@ -44,13 +44,13 @@ use super::interner::MappedInterner;
 use super::logger::SearchLogger;
 use super::query_graph::QueryNode;
 use super::ranking_rule_graph::{
-    ConditionDocIdsCache, DeadEndsCache, ProximityGraph, RankingRuleGraph,
-    RankingRuleGraphTrait, TypoGraph,
+    ConditionDocIdsCache, DeadEndsCache, ProximityGraph, RankingRuleGraph, RankingRuleGraphTrait,
+    TypoGraph,
 };
 use super::small_bitmap::SmallBitmap;
 use super::{QueryGraph, RankingRule, RankingRuleOutput, SearchContext};
 use crate::search::new::query_graph::QueryNodeData;
-use crate::search::new::query_term::DerivationsSubset;
+use crate::search::new::query_term::QueryTermSubset;
 use crate::Result;
 
 pub type Proximity = GraphBasedRankingRule<ProximityGraph>;
@@ -341,37 +341,40 @@ impl<'ctx, G: RankingRuleGraphTrait> RankingRule<'ctx, QueryGraph> for GraphBase
         // that was used to compute this bucket
         // But we only do it in case the bucket length is >1, because otherwise
         // we know the child ranking rule won't be called anyway
-        let mut next_query_graph = original_graph.query_graph;
+        let mut next_query_graph = original_graph.query_graph.clone();
 
         if bucket.len() > 1 {
             next_query_graph.simplify();
 
-            let mut subset_for_node = next_query_graph.nodes.map(|_| DerivationsSubset::Nothing);
+            let mut subset_for_term = ctx.term_interner.map_indexes(QueryTermSubset::empty);
             for condition in used_conditions.iter() {
-                let (from_subset, to_subset) =
-                    condition_docids_cache.get_subsets_used_by_condition(condition);
-                let from_nodes = original_graph.from_nodes_of_condition.get(condition);
-                for from_node in from_nodes.iter() {
-                    let existing_subset = subset_for_node.get_mut(from_node);
-                    existing_subset.union(from_subset);
-                }
+                let subsets = condition_docids_cache.get_subsets_used_by_condition(condition);
 
-                let to_nodes = original_graph.to_nodes_of_condition.get(condition);
-                for to_node in to_nodes.iter() {
-                    let existing_subset = subset_for_node.get_mut(to_node);
-                    existing_subset.union(to_subset);
+                let nodes_of_condition = original_graph.nodes_of_condition.get(condition);
+
+                for node in nodes_of_condition.iter() {
+                    let QueryNodeData::Term(term) = &original_graph.query_graph.nodes.get(node).data else {
+                        continue;
+                    };
+                    let existing_subset = subset_for_term.get_mut(term.term_subset.original);
+                    for subset in subsets.iter() {
+                        if subset.original == existing_subset.original {
+                            existing_subset.union(subset);
+                        }
+                    }
                 }
             }
 
-            for (node_id, node) in next_query_graph.nodes.iter_mut() {
+            for (_node_id, node) in next_query_graph.nodes.iter_mut() {
                 let term = match &mut node.data {
                     QueryNodeData::Term(term) => term,
                     QueryNodeData::Deleted | QueryNodeData::Start | QueryNodeData::End => continue,
                 };
-                let used_subset = subset_for_node.get(node_id);
-                term.term_subset.zero_typo_subset.intersect(used_subset);
-                term.term_subset.one_typo_subset.intersect(used_subset);
-                term.term_subset.two_typo_subset.intersect(used_subset);
+                let used_subset = subset_for_term.get(term.term_subset.original);
+
+                term.term_subset.intersect(used_subset);
+                term.term_subset.intersect(used_subset);
+                term.term_subset.intersect(used_subset);
             }
             let mut unused_nodes = SmallBitmap::for_interned_values_in(&next_query_graph.nodes);
             for (node_id, node) in next_query_graph.nodes.iter() {
@@ -389,8 +392,9 @@ impl<'ctx, G: RankingRuleGraphTrait> RankingRule<'ctx, QueryGraph> for GraphBase
             }
 
             // 3. Remove the empty nodes from the graph
-            next_query_graph
-                .remove_nodes_keep_edges(unused_nodes.iter().collect::<Vec<_>>().as_slice());
+            // Note that a different process should be used to remove nodes
+            // when using the terms matching strategy!
+            next_query_graph.remove_nodes(unused_nodes.iter().collect::<Vec<_>>().as_slice());
         }
 
         self.state = Some(state);

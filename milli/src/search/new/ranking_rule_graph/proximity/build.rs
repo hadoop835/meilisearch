@@ -19,7 +19,7 @@ pub fn build_edges(
         QueryNodeData::Term(term) => term,
     };
     let LocatedQueryTermSubset { term_subset: right_term_subset, positions: right_positions } =
-        right_term; //value: right_term_interned, positions: right_positions } = right_term;
+        right_term;
 
     let (right_start_position, right_ngram_length) =
         (*right_positions.start(), right_positions.len());
